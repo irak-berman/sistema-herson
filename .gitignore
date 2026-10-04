@@ -1,0 +1,24 @@
+# Datos del negocio: no se versionan por confidencialidad
+datos/
+*.xlsx
+*.csv
+
+# Base de datos generada: se reconstruye con el script
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Entorno y editor
+.vscode/
+.env
+
+# Windows
+Thumbs.db
+desktop.ini
