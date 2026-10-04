@@ -20,10 +20,10 @@ PRAGMA foreign_keys = ON;
 -- consultarse sin abrir nueve hojas.
 -- ---------------------------------------------------------------------
 CREATE TABLE proveedor (
-    id_proveedor    INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre          TEXT    NOT NULL UNIQUE,
-    activo          INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
-    observaciones   TEXT
+    id_proveedor     INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre           TEXT    NOT NULL UNIQUE,
+    activo           INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+    observaciones    TEXT
 );
 
 -- ---------------------------------------------------------------------
@@ -33,9 +33,10 @@ CREATE TABLE proveedor (
 -- el instrumental, el equipo y el mobiliario en 0.
 -- ---------------------------------------------------------------------
 CREATE TABLE categoria (
-    id_categoria    INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre          TEXT    NOT NULL UNIQUE,
-    maneja_caducidad INTEGER NOT NULL DEFAULT 0 CHECK (maneja_caducidad IN (0, 1))
+    id_categoria     INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre           TEXT    NOT NULL UNIQUE,
+    maneja_caducidad INTEGER NOT NULL DEFAULT 0
+                     CHECK (maneja_caducidad IN (0, 1))
 );
 
 -- ---------------------------------------------------------------------
@@ -47,35 +48,35 @@ CREATE TABLE categoria (
 -- La clave del proveedor se conserva aparte para poder hacer pedidos.
 -- ---------------------------------------------------------------------
 CREATE TABLE producto (
-    id_producto      INTEGER PRIMARY KEY AUTOINCREMENT,
-    clave_interna    TEXT    NOT NULL UNIQUE,
-    clave_proveedor  TEXT,
-    descripcion      TEXT    NOT NULL,
-    id_categoria     INTEGER NOT NULL,
-    id_proveedor     INTEGER,
+    id_producto       INTEGER PRIMARY KEY AUTOINCREMENT,
+    clave_interna     TEXT    NOT NULL UNIQUE,
+    clave_proveedor   TEXT,
+    descripcion       TEXT    NOT NULL,
+    id_categoria      INTEGER NOT NULL,
+    id_proveedor      INTEGER,
 
     -- Unidad base en la que se controla la existencia. Todas las
     -- presentaciones se convierten a esta unidad.
-    unidad_base      TEXT    NOT NULL DEFAULT 'pieza',
+    unidad_base       TEXT    NOT NULL DEFAULT 'pieza',
 
-    costo_unitario   REAL    NOT NULL DEFAULT 0 CHECK (costo_unitario >= 0),
-    precio_venta     REAL    NOT NULL DEFAULT 0 CHECK (precio_venta >= 0),
+    costo_unitario    REAL    NOT NULL DEFAULT 0 CHECK (costo_unitario >= 0),
+    precio_venta      REAL    NOT NULL DEFAULT 0 CHECK (precio_venta >= 0),
 
     -- Existencia mínima por producto. El valor inicial se calcula como
     -- el 15 % de la existencia de la carga inicial, redondeado hacia
     -- arriba y nunca menor a 1, criterio acordado con el propietario.
-    existencia_minima INTEGER NOT NULL DEFAULT 1 CHECK (existencia_minima >= 0),
-
-    -- Se hereda de la categoría y puede ajustarse
+    existencia_minima INTEGER NOT NULL DEFAULT 1
+                      CHECK (existencia_minima >= 0),
 
     -- Se hereda de la categoría y puede ajustarse producto por producto.
-    maneja_caducidad INTEGER NOT NULL DEFAULT 0 CHECK (maneja_caducidad IN (0, 1)),
+    maneja_caducidad  INTEGER NOT NULL DEFAULT 0
+                      CHECK (maneja_caducidad IN (0, 1)),
 
     -- 1 activo, 0 agotado o descontinuado. El propietario decide cuáles
     -- dar de baja; el sistema no los elimina por su cuenta.
-    activo           INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+    activo            INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
 
-    fecha_alta       TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
+    fecha_alta        TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
 
     FOREIGN KEY (id_categoria) REFERENCES categoria (id_categoria),
     FOREIGN KEY (id_proveedor) REFERENCES proveedor (id_proveedor)
@@ -86,7 +87,6 @@ CREATE INDEX idx_producto_descripcion ON producto (descripcion);
 CREATE INDEX idx_producto_proveedor   ON producto (id_proveedor);
 
 -- ---------------------------------------------------------------------
-
 -- Tabla: presentacion
 -- Resuelve que el depósito venda al por mayor y al menudeo. El mismo
 -- producto sale por caja, por paquete o por pieza, y cada presentación
@@ -96,14 +96,14 @@ CREATE INDEX idx_producto_proveedor   ON producto (id_proveedor);
 -- mayoreo.
 -- ---------------------------------------------------------------------
 CREATE TABLE presentacion (
-    id_presentacion  INTEGER PRIMARY KEY AUTOINCREMENT,
-    id_producto      INTEGER NOT NULL,
-    nombre           TEXT    NOT NULL,
+    id_presentacion   INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_producto       INTEGER NOT NULL,
+    nombre            TEXT    NOT NULL,
 
     -- Cuántas unidades base entrega esta presentación
-    factor           REAL    NOT NULL CHECK (factor > 0),
+    factor            REAL    NOT NULL CHECK (factor > 0),
 
-    precio_venta     REAL    NOT NULL CHECK (precio_venta >= 0),
+    precio_venta      REAL    NOT NULL CHECK (precio_venta >= 0),
 
     -- Marca la presentación que se ofrece por omisión al vender
     es_predeterminada INTEGER NOT NULL DEFAULT 0
@@ -154,9 +154,9 @@ CREATE TABLE movimiento (
     id_lote         INTEGER,
 
     -- entrada: compra a proveedor
-    -- salida: venta al cliente
-    -- ajuste: corrección por conteo físico
-    -- merma: producto caducado o dañado
+    -- salida:  venta al cliente
+    -- ajuste:  corrección por conteo físico
+    -- merma:   producto caducado o dañado
     tipo            TEXT    NOT NULL
                     CHECK (tipo IN ('entrada', 'salida', 'ajuste', 'merma')),
 
@@ -184,25 +184,25 @@ CREATE INDEX idx_movimiento_fecha    ON movimiento (fecha);
 -- construir algo que el negocio no utiliza.
 -- ---------------------------------------------------------------------
 CREATE TABLE venta (
-    id_venta        INTEGER PRIMARY KEY AUTOINCREMENT,
-    folio           TEXT    NOT NULL UNIQUE,
-    fecha           TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    id_venta         INTEGER PRIMARY KEY AUTOINCREMENT,
+    folio            TEXT    NOT NULL UNIQUE,
+    fecha            TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
 
-    cliente         TEXT,
+    cliente          TEXT,
 
-    forma_pago      TEXT    NOT NULL DEFAULT 'efectivo'
-                    CHECK (forma_pago IN ('efectivo', 'transferencia', 'credito')),
+    forma_pago       TEXT    NOT NULL DEFAULT 'efectivo'
+                     CHECK (forma_pago IN ('efectivo', 'transferencia', 'credito')),
 
     -- El crédito lo autoriza el propietario
-    credito_pagado  INTEGER NOT NULL DEFAULT 1
-                    CHECK (credito_pagado IN (0, 1)),
+    credito_pagado   INTEGER NOT NULL DEFAULT 1
+                     CHECK (credito_pagado IN (0, 1)),
 
     requiere_factura INTEGER NOT NULL DEFAULT 0
                      CHECK (requiere_factura IN (0, 1)),
 
-    descuento       REAL    NOT NULL DEFAULT 0 CHECK (descuento >= 0),
-    total           REAL    NOT NULL DEFAULT 0 CHECK (total >= 0),
-    observaciones   TEXT
+    descuento        REAL    NOT NULL DEFAULT 0 CHECK (descuento >= 0),
+    total            REAL    NOT NULL DEFAULT 0 CHECK (total >= 0),
+    observaciones    TEXT
 );
 
 CREATE INDEX idx_venta_fecha ON venta (fecha);
@@ -245,17 +245,16 @@ CREATE INDEX idx_detalle_producto ON venta_detalle (id_producto);
 -- ---------------------------------------------------------------------
 -- Vista: v_existencia
 -- Existencia actual por producto, obtenida de la suma de movimientos.
--- Atiende los requerimientos de consulta de existencia del diagnóstico.
 -- ---------------------------------------------------------------------
 CREATE VIEW v_existencia AS
 SELECT
     p.id_producto,
     p.clave_interna,
     p.descripcion,
-    c.nombre                         AS categoria,
-    pr.nombre                        AS proveedor,
+    c.nombre                     AS categoria,
+    pr.nombre                    AS proveedor,
     p.unidad_base,
-    COALESCE(SUM(m.cantidad), 0)     AS existencia,
+    COALESCE(SUM(m.cantidad), 0) AS existencia,
     p.existencia_minima,
     p.costo_unitario,
     p.precio_venta,
@@ -312,13 +311,13 @@ CREATE VIEW v_ventas_plano AS
 SELECT
     v.id_venta,
     v.folio,
-    date(v.fecha)                AS fecha,
+    date(v.fecha)                        AS fecha,
     v.cliente,
     v.forma_pago,
     p.clave_interna,
     p.descripcion,
-    c.nombre                     AS categoria,
-    pr.nombre                    AS proveedor,
+    c.nombre                             AS categoria,
+    pr.nombre                            AS proveedor,
     COALESCE(pres.nombre, p.unidad_base) AS presentacion,
     d.cantidad,
     d.cantidad_base,
@@ -327,9 +326,8 @@ SELECT
     p.costo_unitario,
     d.importe - (d.cantidad_base * p.costo_unitario) AS utilidad_estimada
 FROM venta_detalle d
-JOIN venta    v    ON v.id_venta       = d.id_venta
-JOIN producto p    ON p.id_producto    = d.id_producto
-LEFT JOIN categoria    c    ON c.id_categoria    = p.id_categoria
-LEFT JOIN proveedor    pr   ON pr.id_proveedor   = p.id_proveedor
+JOIN venta    v ON v.id_venta    = d.id_venta
+JOIN producto p ON p.id_producto = d.id_producto
+LEFT JOIN categoria    c    ON c.id_categoria       = p.id_categoria
+LEFT JOIN proveedor    pr   ON pr.id_proveedor      = p.id_proveedor
 LEFT JOIN presentacion pres ON pres.id_presentacion = d.id_presentacion;
-
