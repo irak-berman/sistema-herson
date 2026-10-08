@@ -271,3 +271,222 @@ def resumen_inventario() -> dict:
         'por_caducar': caducidad['total'],
         'valor_inventario': valor['total'],
     }
+
+# =====================================================================
+# Lotes
+# =====================================================================
+
+
+def listar_lotes(id_producto: int, solo_con_existencia: bool = True) -> list:
+    """
+    Devuelve los lotes de un producto con su existencia calculada.
+
+    Se ordenan por fecha de caducidad para que al vender salga primero
+    el que vence antes, que es la práctica que evita mermas.
+    """
+    filtro = 'HAVING existencia_lote > 0' if solo_con_existencia else ''
+    return consultar(f"""
+        SELECT
+            l.id_lote,
+            l.numero_lote,
+            l.fecha_caducidad,
+            l.fecha_entrada,
+            COALESCE(SUM(m.cantidad), 0) AS existencia_lote
+        FROM lote l
+        LEFT JOIN movimiento m ON m.id_lote = l.id_lote
+        WHERE l.id_producto = ?
+        GROUP BY l.id_lote
+        {filtro}
+        ORDER BY l.fecha_caducidad IS NULL, l.fecha_caducidad
+    """, (id_producto,))
+
+
+def crear_lote(id_producto: int, numero_lote: str = None,
+               fecha_caducidad: str = None, observaciones: str = None) -> int:
+    """
+    Registra un lote y devuelve su identificador.
+
+    El número y la fecha admiten nulos porque no siempre vienen en el
+    empaque. Es preferible que falten y se note, a capturar un dato
+    inventado.
+    """
+    return ejecutar("""
+        INSERT INTO lote (id_producto, numero_lote, fecha_caducidad, observaciones)
+        VALUES (?, ?, ?, ?)
+    """, (id_producto, numero_lote, fecha_caducidad, observaciones))
+
+
+# =====================================================================
+# Movimientos de inventario
+# =====================================================================
+
+
+def registrar_movimiento(id_producto: int, tipo: str, cantidad: float,
+                         id_lote: int = None, costo_unitario: float = None,
+                         referencia: str = None,
+                         observaciones: str = None) -> int:
+    """
+    Registra un movimiento de inventario en unidad base.
+
+    El signo lo define el tipo, no quien llama a la función. Las salidas
+    y las mermas se guardan en negativo, de modo que la existencia sea
+    siempre la suma de los movimientos.
+    """
+    TIPOS = ('entrada', 'salida', 'ajuste', 'merma')
+    if tipo not in TIPOS:
+        raise ValueError(f'Tipo de movimiento no válido: {tipo}')
+
+    cantidad = abs(cantidad)
+    if cantidad == 0:
+        raise ValueError('La cantidad del movimiento no puede ser cero')
+
+    if tipo in ('salida', 'merma'):
+        cantidad = -cantidad
+
+    return ejecutar("""
+        INSERT INTO movimiento
+            (id_producto, id_lote, tipo, cantidad, costo_unitario,
+             referencia, observaciones)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (id_producto, id_lote, tipo, cantidad, costo_unitario,
+          referencia, observaciones))
+
+
+def registrar_ajuste(id_producto: int, existencia_contada: float,
+                     observaciones: str = None):
+    """
+    Corrige la existencia tras un conteo físico.
+
+    Calcula la diferencia contra lo que el sistema tiene registrado y
+    genera el movimiento solo si hay discrepancia. Devuelve la
+    diferencia aplicada, o cero si el conteo coincidía.
+    """
+    producto = obtener_producto(id_producto)
+    if producto is None:
+        raise ValueError(f'No existe el producto {id_producto}')
+
+    diferencia = existencia_contada - producto['existencia']
+    if diferencia == 0:
+        return 0
+
+    ejecutar("""
+        INSERT INTO movimiento
+            (id_producto, tipo, cantidad, referencia, observaciones)
+        VALUES (?, 'ajuste', ?, 'Conteo físico', ?)
+    """, (id_producto, diferencia, observaciones))
+    return diferencia
+
+
+def historial_movimientos(id_producto: int, limite: int = 50) -> list:
+    """Devuelve los movimientos recientes de un producto."""
+    return consultar("""
+        SELECT
+            m.id_movimiento,
+            m.tipo,
+            m.cantidad,
+            m.fecha,
+            m.referencia,
+            m.observaciones,
+            l.numero_lote
+        FROM movimiento m
+        LEFT JOIN lote l ON l.id_lote = m.id_lote
+        WHERE m.id_producto = ?
+        ORDER BY m.fecha DESC, m.id_movimiento DESC
+        LIMIT ?
+    """, (id_producto, limite))
+
+
+# =====================================================================
+# Ventas
+# =====================================================================
+
+
+def siguiente_folio(prefijo: str = 'N') -> str:
+    """
+    Genera el siguiente folio consecutivo de nota.
+
+    Usa un prefijo propio del sistema para no chocar con los folios
+    impresos del talonario, que seguirán existiendo mientras ambos
+    convivan.
+    """
+    fila = consultar_una("""
+        SELECT folio FROM venta
+        WHERE folio LIKE ?
+        ORDER BY LENGTH(folio) DESC, folio DESC
+        LIMIT 1
+    """, (f'{prefijo}-%',))
+
+    if fila is None:
+        return f'{prefijo}-00001'
+
+    try:
+        consecutivo = int(fila['folio'].split('-')[-1]) + 1
+    except (ValueError, IndexError):
+        consecutivo = 1
+    return f'{prefijo}-{consecutivo:05d}'
+
+
+def obtener_venta(id_venta: int):
+    """Devuelve el encabezado de una venta, o None."""
+    return consultar_una('SELECT * FROM venta WHERE id_venta = ?', (id_venta,))
+
+
+def detalle_de_venta(id_venta: int) -> list:
+    """Devuelve los renglones de una venta, listos para imprimir la nota."""
+    return consultar("""
+        SELECT
+            d.id_detalle,
+            p.clave_interna,
+            p.descripcion,
+            COALESCE(pr.nombre, p.unidad_base) AS presentacion,
+            d.cantidad,
+            d.cantidad_base,
+            d.precio_unitario,
+            d.importe
+        FROM venta_detalle d
+        JOIN producto p ON p.id_producto = d.id_producto
+        LEFT JOIN presentacion pr ON pr.id_presentacion = d.id_presentacion
+        WHERE d.id_venta = ?
+        ORDER BY d.id_detalle
+    """, (id_venta,))
+
+
+def ventas_del_dia(fecha: str = None) -> list:
+    """
+    Devuelve las ventas de un día, con su número de renglones.
+
+    Sin fecha, toma el día actual. Es la consulta del corte diario.
+    """
+    condicion = 'date(fecha) = ?' if fecha else "date(fecha) = date('now', 'localtime')"
+    parametros = (fecha,) if fecha else ()
+    return consultar(f"""
+        SELECT
+            v.id_venta,
+            v.folio,
+            v.fecha,
+            v.cliente,
+            v.forma_pago,
+            v.total,
+            COUNT(d.id_detalle) AS renglones
+        FROM venta v
+        LEFT JOIN venta_detalle d ON d.id_venta = v.id_venta
+        WHERE {condicion}
+        GROUP BY v.id_venta
+        ORDER BY v.fecha DESC
+    """, parametros)
+
+
+def creditos_pendientes() -> list:
+    """Ventas a crédito que siguen sin liquidarse."""
+    return consultar("""
+        SELECT id_venta, folio, date(fecha) AS fecha, cliente, total
+        FROM venta
+        WHERE forma_pago = 'credito' AND credito_pagado = 0
+        ORDER BY fecha
+    """)
+
+
+def marcar_credito_pagado(id_venta: int) -> None:
+    """Registra que un crédito quedó liquidado."""
+    ejecutar('UPDATE venta SET credito_pagado = 1 WHERE id_venta = ?',
+             (id_venta,))
