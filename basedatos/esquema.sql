@@ -40,6 +40,36 @@ CREATE TABLE categoria (
 );
 
 -- ---------------------------------------------------------------------
+-- Tabla: unidad
+-- Catálogo de unidades de medida. Existe para que el mismo concepto no
+-- se guarde escrito de formas distintas, que es uno de los problemas
+-- detectados en el archivo de Excel del depósito. Guarda también el
+-- plural, de modo que los mensajes digan "30 piezas" y no "30 pieza".
+-- ---------------------------------------------------------------------
+CREATE TABLE unidad (
+    id_unidad   INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre      TEXT    NOT NULL UNIQUE,
+    plural      TEXT    NOT NULL,
+    activo      INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1))
+);
+
+-- Unidades iniciales. El propietario puede agregar o retirar las que
+-- necesite desde la pantalla de catálogo.
+INSERT INTO unidad (nombre, plural) VALUES
+    ('pieza', 'piezas'),
+    ('caja', 'cajas'),
+    ('paquete', 'paquetes'),
+    ('frasco', 'frascos'),
+    ('bote', 'botes'),
+    ('tubo', 'tubos'),
+    ('sobre', 'sobres'),
+    ('jeringa', 'jeringas'),
+    ('rollo', 'rollos'),
+    ('par', 'pares'),
+    ('juego', 'juegos'),
+    ('kit', 'kits');
+
+-- ---------------------------------------------------------------------
 -- Tabla: producto
 -- Núcleo del catálogo. La clave interna resuelve el problema detectado
 -- en el diagnóstico: 248 renglones sin clave y 75 claves repetidas en
@@ -57,7 +87,7 @@ CREATE TABLE producto (
 
     -- Unidad base en la que se controla la existencia. Todas las
     -- presentaciones se convierten a esta unidad.
-    unidad_base       TEXT    NOT NULL DEFAULT 'pieza',
+    id_unidad         INTEGER NOT NULL,
 
     costo_unitario    REAL    NOT NULL DEFAULT 0 CHECK (costo_unitario >= 0),
     precio_venta      REAL    NOT NULL DEFAULT 0 CHECK (precio_venta >= 0),
@@ -79,7 +109,8 @@ CREATE TABLE producto (
     fecha_alta        TEXT    NOT NULL DEFAULT (date('now', 'localtime')),
 
     FOREIGN KEY (id_categoria) REFERENCES categoria (id_categoria),
-    FOREIGN KEY (id_proveedor) REFERENCES proveedor (id_proveedor)
+    FOREIGN KEY (id_proveedor) REFERENCES proveedor (id_proveedor),
+    FOREIGN KEY (id_unidad)    REFERENCES unidad (id_unidad)
 );
 
 -- Índices sobre las columnas que más se van a consultar al vender
@@ -98,7 +129,7 @@ CREATE INDEX idx_producto_proveedor   ON producto (id_proveedor);
 CREATE TABLE presentacion (
     id_presentacion   INTEGER PRIMARY KEY AUTOINCREMENT,
     id_producto       INTEGER NOT NULL,
-    nombre            TEXT    NOT NULL,
+    id_unidad         INTEGER NOT NULL,
 
     -- Cuántas unidades base entrega esta presentación
     factor            REAL    NOT NULL CHECK (factor > 0),
@@ -111,9 +142,10 @@ CREATE TABLE presentacion (
 
     FOREIGN KEY (id_producto) REFERENCES producto (id_producto)
         ON DELETE CASCADE,
+    FOREIGN KEY (id_unidad)   REFERENCES unidad (id_unidad),
 
-    -- Un producto no puede tener dos presentaciones con el mismo nombre
-    UNIQUE (id_producto, nombre)
+    -- Un producto no puede tener dos presentaciones en la misma unidad
+    UNIQUE (id_producto, id_unidad)
 );
 
 -- ---------------------------------------------------------------------
@@ -253,13 +285,16 @@ SELECT
     p.descripcion,
     c.nombre                     AS categoria,
     pr.nombre                    AS proveedor,
-    p.unidad_base,
+    u.nombre                     AS unidad_base,
+    u.plural                     AS unidad_plural,
+    p.id_unidad,
     COALESCE(SUM(m.cantidad), 0) AS existencia,
     p.existencia_minima,
     p.costo_unitario,
     p.precio_venta,
     p.activo
 FROM producto p
+JOIN unidad u ON u.id_unidad = p.id_unidad
 LEFT JOIN categoria  c  ON c.id_categoria  = p.id_categoria
 LEFT JOIN proveedor  pr ON pr.id_proveedor = p.id_proveedor
 LEFT JOIN movimiento m  ON m.id_producto   = p.id_producto
@@ -318,7 +353,7 @@ SELECT
     p.descripcion,
     c.nombre                             AS categoria,
     pr.nombre                            AS proveedor,
-    COALESCE(pres.nombre, p.unidad_base) AS presentacion,
+    COALESCE(up.nombre, u.nombre)        AS presentacion,
     d.cantidad,
     d.cantidad_base,
     d.precio_unitario,
@@ -328,6 +363,8 @@ SELECT
 FROM venta_detalle d
 JOIN venta    v ON v.id_venta    = d.id_venta
 JOIN producto p ON p.id_producto = d.id_producto
+JOIN unidad   u ON u.id_unidad   = p.id_unidad
 LEFT JOIN categoria    c    ON c.id_categoria       = p.id_categoria
 LEFT JOIN proveedor    pr   ON pr.id_proveedor      = p.id_proveedor
-LEFT JOIN presentacion pres ON pres.id_presentacion = d.id_presentacion;
+LEFT JOIN presentacion pres ON pres.id_presentacion = d.id_presentacion
+LEFT JOIN unidad       up   ON up.id_unidad         = pres.id_unidad;

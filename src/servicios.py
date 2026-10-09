@@ -298,8 +298,8 @@ def cancelar_venta(id_venta: int, motivo: str = None) -> None:
 
 def alta_rapida(descripcion: str, id_categoria: int, id_proveedor: int,
                 existencia: float, costo_unitario: float,
-                precio_venta: float, clave_proveedor: str = None,
-                unidad_base: str = 'pieza') -> int:
+                precio_venta: float, id_unidad: int,
+                clave_proveedor: str = None) -> int:
     """
     Da de alta un producto con su existencia inicial en un solo paso.
 
@@ -314,7 +314,7 @@ def alta_rapida(descripcion: str, id_categoria: int, id_proveedor: int,
         id_categoria=id_categoria,
         id_proveedor=id_proveedor,
         clave_proveedor=clave_proveedor,
-        unidad_base=unidad_base,
+        id_unidad=id_unidad,
         costo_unitario=costo_unitario,
         precio_venta=precio_venta,
         existencia_minima=minima,

@@ -17,7 +17,7 @@ from conexion import BaseNoEncontrada
 
 def pesos(cantidad: float) -> str:
     """Da formato de moneda a un importe."""
-    return f'{cantidad:,.2f} pesos'
+    return f'${cantidad:,.2f}'
 
 
 def mostrar_indicadores(resumen: dict) -> None:

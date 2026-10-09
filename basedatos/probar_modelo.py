@@ -72,15 +72,20 @@ def alta_de_catalogo(conexion: sqlite3.Connection) -> None:
     conexion.execute("""
         INSERT INTO producto
             (clave_interna, descripcion, id_categoria, id_proveedor,
-             costo_unitario, precio_venta, existencia_minima, maneja_caducidad)
-        VALUES ('HER-0001', 'Guante de nitrilo chico', 1, 1, ?, 4.0, ?, 1)
+             id_unidad, costo_unitario, precio_venta, existencia_minima,
+             maneja_caducidad)
+        VALUES ('HER-0001', 'Guante de nitrilo chico', 1, 1,
+                (SELECT id_unidad FROM unidad WHERE nombre = 'pieza'),
+                ?, 4.0, ?, 1)
     """, (COSTO_UNITARIO, EXISTENCIA_MINIMA))
 
     # Dos presentaciones del mismo producto: caja y pieza suelta
     conexion.execute("""
         INSERT INTO presentacion
-            (id_producto, nombre, factor, precio_venta, es_predeterminada)
-        VALUES (1, 'caja', ?, ?, 0), (1, 'pieza', 1, 4.0, 1)
+            (id_producto, id_unidad, factor, precio_venta, es_predeterminada)
+        VALUES
+            (1, (SELECT id_unidad FROM unidad WHERE nombre = 'caja'), ?, ?, 0),
+            (1, (SELECT id_unidad FROM unidad WHERE nombre = 'pieza'), 1, 4.0, 1)
     """, (PIEZAS_POR_CAJA, PRECIO_CAJA))
 
 
@@ -126,7 +131,7 @@ def main() -> int:
 
     print('\n1. Creación de la base de datos')
     tablas, vistas = contar_objetos(conexion)
-    verificar('Se crearon las 8 tablas del modelo', tablas, 8)
+    verificar('Se crearon las 9 tablas del modelo', tablas, 9)
     verificar('Se crearon las 4 vistas del modelo', vistas, 4)
     integridad = conexion.execute('PRAGMA integrity_check').fetchone()[0]
     verificar('La comprobación de integridad es correcta', integridad, 'ok')

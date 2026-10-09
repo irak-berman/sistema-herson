@@ -31,9 +31,6 @@ st.set_page_config(
 )
 
 # Ajustes visuales.
-# Se ocultan los avisos de "pulse Enter", que se enciman con el texto
-# que el usuario escribe, y los botones de incremento de los campos
-# numéricos, que estorban al capturar precios y cantidades.
 ESTILOS = """
 <style>
     /* Avisos de "pulse Enter", que se encimaban con el texto escrito */
@@ -54,19 +51,38 @@ ESTILOS = """
         outline: none !important;
         box-shadow: none !important;
     }
-    [data-baseweb="tab-border"] { background-color: #E6E9F0; }
+
+    /* Los indicadores deben alojar importes de siete dígitos sin
+       recortarse, porque el inventario completo del depósito supera
+       las seis cifras. */
+    [data-testid="stMetricValue"] { font-size: 1.7rem; }
+
+    /* Margen superior reducido. El espacio que Streamlit reserva por
+       omisión es para su barra de herramientas, que aquí está oculta. */
+    .block-container { padding-top: 2.2rem; }
 </style>
 """
 st.markdown(ESTILOS, unsafe_allow_html=True)
 
-PANTALLAS = [
-    st.Page('paginas/inicio.py', title='Inicio', icon='🏠', default=True),
-    st.Page('paginas/catalogo.py', title='Catálogo', icon='📦'),
-]
+# Las secciones del catálogo son páginas del menú lateral y no pestañas.
+# El menú permanece visible al desplazarse, de modo que en listados
+# largos no haya que regresar al inicio para cambiar de sección.
+PANTALLAS = {
+    'General': [
+        st.Page('paginas/inicio.py', title='Inicio', icon='🏠', default=True),
+    ],
+    'Catálogo': [
+        st.Page('paginas/cat_buscar.py', title='Buscar', icon='🔍'),
+        st.Page('paginas/cat_alta.py', title='Dar de alta', icon='➕'),
+        st.Page('paginas/cat_editar.py', title='Editar', icon='✏️'),
+        st.Page('paginas/cat_apoyo.py', title='Catálogos de apoyo', icon='🗂️'),
+    ],
+}
 
 navegacion = st.navigation(PANTALLAS)
 
 with st.sidebar:
+    st.divider()
     st.caption('Depósito Dental HERSON')
     st.caption('Control de inventario')
 

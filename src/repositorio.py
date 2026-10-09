@@ -53,6 +53,71 @@ def crear_categoria(nombre: str, maneja_caducidad: bool = False) -> int:
 
 
 # =====================================================================
+# Unidades de medida
+# =====================================================================
+
+
+def listar_unidades(solo_activas: bool = True) -> list:
+    """Devuelve las unidades de medida ordenadas por nombre."""
+    filtro = 'WHERE activo = 1' if solo_activas else ''
+    return consultar(f"""
+        SELECT id_unidad, nombre, plural, activo
+        FROM unidad
+        {filtro}
+        ORDER BY nombre
+    """)
+
+
+def crear_unidad(nombre: str, plural: str) -> int:
+    """Registra una unidad de medida y devuelve su identificador."""
+    return ejecutar(
+        'INSERT INTO unidad (nombre, plural) VALUES (?, ?)',
+        (nombre.strip().lower(), plural.strip().lower())
+    )
+
+
+def actualizar_unidad(id_unidad: int, nombre: str = None, plural: str = None,
+                      activo: bool = None) -> None:
+    """Modifica una unidad de medida."""
+    cambios = {}
+    if nombre is not None:
+        cambios['nombre'] = nombre.strip().lower()
+    if plural is not None:
+        cambios['plural'] = plural.strip().lower()
+    if activo is not None:
+        cambios['activo'] = 1 if activo else 0
+    if not cambios:
+        return
+
+    asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
+    ejecutar(f'UPDATE unidad SET {asignaciones} WHERE id_unidad = ?',
+             tuple(list(cambios.values()) + [id_unidad]))
+
+
+def usos_de_unidad(id_unidad: int) -> int:
+    """Cuenta productos y presentaciones que usan una unidad."""
+    fila = consultar_una("""
+        SELECT
+            (SELECT COUNT(*) FROM producto WHERE id_unidad = ?) +
+            (SELECT COUNT(*) FROM presentacion WHERE id_unidad = ?) AS total
+    """, (id_unidad, id_unidad))
+    return fila['total']
+
+
+def eliminar_unidad(id_unidad: int) -> None:
+    """
+    Elimina una unidad que no esté en uso.
+
+    Si ya hay productos o presentaciones que la usan, no se borra: se
+    desactiva, de modo que deje de ofrecerse sin romper lo registrado.
+    """
+    if usos_de_unidad(id_unidad) > 0:
+        raise ValueError(
+            'La unidad está en uso. Se puede desactivar, pero no eliminar.')
+    ejecutar('DELETE FROM unidad WHERE id_unidad = ?', (id_unidad,))
+
+
+# =====================================================================
 # Productos
 # =====================================================================
 
@@ -140,9 +205,9 @@ def siguiente_clave_interna(prefijo: str = 'HER') -> str:
     return f'{prefijo}-{consecutivo:04d}'
 
 
-def crear_producto(descripcion: str, id_categoria: int,
+def crear_producto(descripcion: str, id_categoria: int, id_unidad: int,
                    id_proveedor: int = None, clave_proveedor: str = None,
-                   unidad_base: str = 'pieza', costo_unitario: float = 0,
+                   costo_unitario: float = 0,
                    precio_venta: float = 0, existencia_minima: int = 1,
                    maneja_caducidad: bool = None,
                    clave_interna: str = None) -> int:
@@ -166,11 +231,11 @@ def crear_producto(descripcion: str, id_categoria: int,
     return ejecutar("""
         INSERT INTO producto
             (clave_interna, clave_proveedor, descripcion, id_categoria,
-             id_proveedor, unidad_base, costo_unitario, precio_venta,
+             id_proveedor, id_unidad, costo_unitario, precio_venta,
              existencia_minima, maneja_caducidad)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (clave_interna, clave_proveedor, descripcion.strip(), id_categoria,
-          id_proveedor, unidad_base, costo_unitario, precio_venta,
+          id_proveedor, id_unidad, costo_unitario, precio_venta,
           existencia_minima, 1 if maneja_caducidad else 0))
 
 
@@ -183,7 +248,7 @@ def actualizar_producto(id_producto: int, **campos) -> None:
     """
     PERMITIDOS = {
         'descripcion', 'clave_proveedor', 'id_categoria', 'id_proveedor',
-        'unidad_base', 'costo_unitario', 'precio_venta',
+        'id_unidad', 'costo_unitario', 'precio_venta',
         'existencia_minima', 'maneja_caducidad', 'activo'
     }
     cambios = {c: v for c, v in campos.items() if c in PERMITIDOS}
@@ -209,22 +274,30 @@ def listar_presentaciones(id_producto: int) -> list:
     ofrezca sin que el usuario tenga que elegir.
     """
     return consultar("""
-        SELECT id_presentacion, nombre, factor, precio_venta, es_predeterminada
-        FROM presentacion
-        WHERE id_producto = ?
-        ORDER BY es_predeterminada DESC, factor
+        SELECT
+            p.id_presentacion,
+            p.id_unidad,
+            u.nombre  AS nombre,
+            u.plural  AS plural,
+            p.factor,
+            p.precio_venta,
+            p.es_predeterminada
+        FROM presentacion p
+        JOIN unidad u ON u.id_unidad = p.id_unidad
+        WHERE p.id_producto = ?
+        ORDER BY p.es_predeterminada DESC, p.factor
     """, (id_producto,))
 
 
-def crear_presentacion(id_producto: int, nombre: str, factor: float,
+def crear_presentacion(id_producto: int, id_unidad: int, factor: float,
                        precio_venta: float,
                        es_predeterminada: bool = False) -> int:
     """Registra una presentación y devuelve su identificador."""
     return ejecutar("""
         INSERT INTO presentacion
-            (id_producto, nombre, factor, precio_venta, es_predeterminada)
+            (id_producto, id_unidad, factor, precio_venta, es_predeterminada)
         VALUES (?, ?, ?, ?, ?)
-    """, (id_producto, nombre.strip(), factor, precio_venta,
+    """, (id_producto, id_unidad, factor, precio_venta,
           1 if es_predeterminada else 0))
 
 
@@ -438,14 +511,16 @@ def detalle_de_venta(id_venta: int) -> list:
             d.id_detalle,
             p.clave_interna,
             p.descripcion,
-            COALESCE(pr.nombre, p.unidad_base) AS presentacion,
+            COALESCE(up.nombre, u.nombre) AS presentacion,
             d.cantidad,
             d.cantidad_base,
             d.precio_unitario,
             d.importe
         FROM venta_detalle d
         JOIN producto p ON p.id_producto = d.id_producto
+        JOIN unidad   u ON u.id_unidad   = p.id_unidad
         LEFT JOIN presentacion pr ON pr.id_presentacion = d.id_presentacion
+        LEFT JOIN unidad       up ON up.id_unidad       = pr.id_unidad
         WHERE d.id_venta = ?
         ORDER BY d.id_detalle
     """, (id_venta,))
@@ -596,3 +671,89 @@ def aplicar_caducidad_de_categoria(id_categoria: int) -> int:
         """, (categoria['maneja_caducidad'], id_categoria,
               categoria['maneja_caducidad']))
         return cursor.rowcount
+
+
+def obtener_presentacion(id_presentacion: int):
+    """Devuelve una presentación, o None."""
+    return consultar_una(
+        'SELECT * FROM presentacion WHERE id_presentacion = ?',
+        (id_presentacion,))
+
+
+def actualizar_presentacion(id_presentacion: int, nombre: int = None,
+                            factor: float = None, precio_venta: float = None,
+                            es_predeterminada: bool = None) -> None:
+    """
+    Modifica una presentación.
+
+    Al marcar una como predeterminada, las demás del mismo producto
+    dejan de serlo, porque solo puede ofrecerse una primero al vender.
+    """
+    cambios = {}
+    if nombre is not None:
+        cambios['id_unidad'] = nombre
+    if factor is not None:
+        cambios['factor'] = factor
+    if precio_venta is not None:
+        cambios['precio_venta'] = precio_venta
+    if es_predeterminada is not None:
+        cambios['es_predeterminada'] = 1 if es_predeterminada else 0
+
+    if not cambios:
+        return
+
+    presentacion = obtener_presentacion(id_presentacion)
+    if presentacion is None:
+        return
+
+    with conexion_abierta() as conexion:
+        if cambios.get('es_predeterminada') == 1:
+            conexion.execute("""
+                UPDATE presentacion SET es_predeterminada = 0
+                WHERE id_producto = ?
+            """, (presentacion['id_producto'],))
+
+        asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
+        conexion.execute(
+            f'UPDATE presentacion SET {asignaciones} WHERE id_presentacion = ?',
+            tuple(list(cambios.values()) + [id_presentacion]))
+
+
+def ventas_con_presentacion(id_presentacion: int) -> int:
+    """Cuenta cuántas ventas usaron una presentación."""
+    fila = consultar_una(
+        'SELECT COUNT(*) AS total FROM venta_detalle WHERE id_presentacion = ?',
+        (id_presentacion,))
+    return fila['total']
+
+
+def eliminar_presentacion(id_presentacion: int) -> None:
+    """
+    Elimina una presentación que no se haya usado en ninguna venta.
+
+    Si ya se vendió con ella, borrarla dejaría renglones históricos sin
+    forma de saber qué se cobró.
+    """
+    if ventas_con_presentacion(id_presentacion) > 0:
+        raise ValueError(
+            'La presentación ya se usó en ventas y no puede eliminarse.')
+    ejecutar('DELETE FROM presentacion WHERE id_presentacion = ?',
+             (id_presentacion,))
+
+
+def productos_desalineados(id_categoria: int) -> int:
+    """
+    Cuenta los productos cuyo indicador de caducidad difiere del de su
+    categoría.
+
+    Sirve para ofrecer la corrección solo cuando hace falta, en lugar de
+    mostrar siempre un botón que casi nunca se usa.
+    """
+    fila = consultar_una("""
+        SELECT COUNT(*) AS total
+        FROM producto p
+        JOIN categoria c ON c.id_categoria = p.id_categoria
+        WHERE p.id_categoria = ?
+          AND p.maneja_caducidad <> c.maneja_caducidad
+    """, (id_categoria,))
+    return fila['total']
