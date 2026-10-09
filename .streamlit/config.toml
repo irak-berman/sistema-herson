@@ -1,0 +1,22 @@
+# Tema visual del sistema de inventario del Depósito Dental HERSON.
+#
+# Se define un azul institucional como color principal en lugar del rojo
+# que Streamlit usa por omisión. El rojo queda reservado para las
+# acciones que destruyen o cancelan información, de modo que el usuario
+# distinga de un vistazo lo que es seguro de lo que no.
+
+[theme]
+primaryColor = "#1F3864"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F5FA"
+textColor = "#1A1A1A"
+font = "sans serif"
+
+[server]
+# El sistema opera en una sola computadora, sin exponerse a la red.
+address = "localhost"
+headless = false
+
+[browser]
+# No se envían estadísticas de uso a servidores externos.
+gatherUsageStats = false

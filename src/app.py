@@ -2,8 +2,9 @@
 """
 Punto de entrada del sistema de inventario del Depósito Dental HERSON.
 
-Arranca la interfaz y muestra la pantalla de inicio con los indicadores
-que el personal necesita ver al abrir el negocio.
+Configura la aplicación, aplica los ajustes visuales y arma el menú de
+navegación. Cada pantalla vive en su propio archivo dentro de la carpeta
+paginas, de modo que agregar una nueva no obligue a tocar las demás.
 
 Uso desde la carpeta del proyecto, con el entorno activado:
     streamlit run src/app.py
@@ -17,14 +18,11 @@ from pathlib import Path
 import streamlit as st
 
 # Streamlit ejecuta el archivo desde la raíz del proyecto, así que la
-# carpeta src debe agregarse a la ruta de búsqueda para poder importar
-# los módulos propios.
+# carpeta src debe agregarse a la ruta de búsqueda para que las
+# pantallas puedan importar los módulos propios.
 CARPETA_SRC = Path(__file__).resolve().parent
 if str(CARPETA_SRC) not in sys.path:
     sys.path.insert(0, str(CARPETA_SRC))
-
-import repositorio as repo              # noqa: E402
-from conexion import BaseNoEncontrada   # noqa: E402
 
 st.set_page_config(
     page_title='Depósito Dental HERSON',
@@ -32,92 +30,44 @@ st.set_page_config(
     layout='wide',
 )
 
+# Ajustes visuales.
+# Se ocultan los avisos de "pulse Enter", que se enciman con el texto
+# que el usuario escribe, y los botones de incremento de los campos
+# numéricos, que estorban al capturar precios y cantidades.
+ESTILOS = """
+<style>
+    /* Avisos de "pulse Enter", que se encimaban con el texto escrito */
+    [data-testid="InputInstructions"] { display: none; }
 
-def pesos(cantidad: float) -> str:
-    """Da formato de moneda a un importe."""
-    return f'{cantidad:,.2f} pesos'
+    /* Botones de incremento de los campos numéricos, que estorban al
+       capturar precios y cantidades */
+    [data-testid="stNumberInputStepUp"],
+    [data-testid="stNumberInputStepDown"] { display: none; }
 
+    [data-testid="stToolbar"] { visibility: hidden; }
 
-def mostrar_indicadores(resumen: dict) -> None:
-    """Dibuja la fila de indicadores principales."""
-    columnas = st.columns(4)
+    /* Recuadro de foco de las pestañas. Se oculta cuando el foco llegó
+       por el ratón y se conserva cuando llegó por teclado, para no
+       dejar sin referencia a quien navegue con el tabulador. */
+    button[data-baseweb="tab"]:focus:not(:focus-visible),
+    button[data-baseweb="tab"]:active {
+        outline: none !important;
+        box-shadow: none !important;
+    }
+    [data-baseweb="tab-border"] { background-color: #E6E9F0; }
+</style>
+"""
+st.markdown(ESTILOS, unsafe_allow_html=True)
 
-    columnas[0].metric('Productos activos', resumen['productos_activos'])
+PANTALLAS = [
+    st.Page('paginas/inicio.py', title='Inicio', icon='🏠', default=True),
+    st.Page('paginas/catalogo.py', title='Catálogo', icon='📦'),
+]
 
-    columnas[1].metric(
-        'Por reabastecer', resumen['por_reabastecer'],
-        help='Productos cuya existencia llegó o bajó de la mínima'
-    )
+navegacion = st.navigation(PANTALLAS)
 
-    columnas[2].metric(
-        'Próximos a caducar', resumen['por_caducar'],
-        help='Lotes con existencia que vencen dentro de 180 días'
-    )
+with st.sidebar:
+    st.caption('Depósito Dental HERSON')
+    st.caption('Control de inventario')
 
-    columnas[3].metric('Valor del inventario', pesos(resumen['valor_inventario']))
-
-
-def mostrar_reabastecer() -> None:
-    """Lista los productos que necesitan pedirse."""
-    productos = repo.productos_por_reabastecer()
-    if not productos:
-        st.success('Ningún producto llegó a su existencia mínima.')
-        return
-
-    st.warning(f'{len(productos)} productos necesitan reabastecerse.')
-    filas = [{
-        'Clave': p['clave_interna'],
-        'Producto': p['descripcion'],
-        'Proveedor': p['proveedor'] or 'Sin asignar',
-        'Existencia': p['existencia'],
-        'Mínima': p['existencia_minima'],
-    } for p in productos]
-    st.dataframe(filas, use_container_width=True, hide_index=True)
-
-
-def mostrar_caducidades() -> None:
-    """Lista los lotes próximos a vencer, el más urgente primero."""
-    lotes = repo.lotes_por_caducar()
-    if not lotes:
-        st.success('Ningún lote vence dentro de los próximos 180 días.')
-        return
-
-    st.warning(f'{len(lotes)} lotes están por caducar.')
-    filas = [{
-        'Clave': l['clave_interna'],
-        'Producto': l['descripcion'],
-        'Lote': l['numero_lote'] or 'Sin número',
-        'Caduca': l['fecha_caducidad'],
-        'Días restantes': l['dias_restantes'],
-        'Existencia': l['existencia_lote'],
-    } for l in lotes]
-    st.dataframe(filas, use_container_width=True, hide_index=True)
-
-
-def main() -> None:
-    st.title('Depósito Dental HERSON')
-    st.caption('Sistema de control de inventario y análisis de ventas')
-
-    try:
-        resumen = repo.resumen_inventario()
-    except BaseNoEncontrada as error:
-        st.error(str(error))
-        st.stop()
-
-    mostrar_indicadores(resumen)
-
-    if resumen['agotados']:
-        st.info(f'{resumen["agotados"]} productos están agotados.')
-
-    st.divider()
-
-    pendientes, caducidades = st.tabs(
-        ['Productos por reabastecer', 'Lotes por caducar'])
-    with pendientes:
-        mostrar_reabastecer()
-    with caducidades:
-        mostrar_caducidades()
-
-
-if __name__ == '__main__':
-    main()
+navegacion.run()

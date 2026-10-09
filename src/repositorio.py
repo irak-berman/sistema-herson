@@ -9,7 +9,7 @@ modelo se corrige en un solo lugar y no en cada pantalla.
 Autor: Irak Berman Gutiérrez
 Estadía profesional, Ingeniería en Sistemas Computacionales, UVEG
 """
-from conexion import consultar, consultar_una, ejecutar
+from conexion import conexion_abierta, consultar, consultar_una, ejecutar
 
 # =====================================================================
 # Proveedores y categorías
@@ -490,3 +490,109 @@ def marcar_credito_pagado(id_venta: int) -> None:
     """Registra que un crédito quedó liquidado."""
     ejecutar('UPDATE venta SET credito_pagado = 1 WHERE id_venta = ?',
              (id_venta,))
+
+
+# =====================================================================
+# Mantenimiento de proveedores y categorías
+# =====================================================================
+
+
+def actualizar_proveedor(id_proveedor: int, nombre: str = None,
+                         activo: bool = None, observaciones: str = None) -> None:
+    """Modifica los datos de un proveedor."""
+    cambios = {}
+    if nombre is not None:
+        cambios['nombre'] = nombre.strip()
+    if activo is not None:
+        cambios['activo'] = 1 if activo else 0
+    if observaciones is not None:
+        cambios['observaciones'] = observaciones
+    if not cambios:
+        return
+
+    asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
+    ejecutar(f'UPDATE proveedor SET {asignaciones} WHERE id_proveedor = ?',
+             tuple(list(cambios.values()) + [id_proveedor]))
+
+
+def productos_de_proveedor(id_proveedor: int) -> int:
+    """Cuenta cuántos productos dependen de un proveedor."""
+    fila = consultar_una(
+        'SELECT COUNT(*) AS total FROM producto WHERE id_proveedor = ?',
+        (id_proveedor,))
+    return fila['total']
+
+
+def eliminar_proveedor(id_proveedor: int) -> None:
+    """
+    Elimina un proveedor que no tenga productos asociados.
+
+    Si ya tiene productos, no se borra: se desactiva. Borrarlo dejaría
+    renglones apuntando a un proveedor inexistente.
+    """
+    if productos_de_proveedor(id_proveedor) > 0:
+        raise ValueError(
+            'El proveedor tiene productos asociados. Se puede desactivar, '
+            'pero no eliminar.')
+    ejecutar('DELETE FROM proveedor WHERE id_proveedor = ?', (id_proveedor,))
+
+
+def actualizar_categoria(id_categoria: int, nombre: str = None,
+                         maneja_caducidad: bool = None) -> None:
+    """
+    Modifica una categoría.
+
+    El cambio de caducidad afecta solo a los productos que se den de
+    alta a partir de ahora, porque cada producto conserva su propio
+    indicador desde el momento en que se registró.
+    """
+    cambios = {}
+    if nombre is not None:
+        cambios['nombre'] = nombre.strip()
+    if maneja_caducidad is not None:
+        cambios['maneja_caducidad'] = 1 if maneja_caducidad else 0
+    if not cambios:
+        return
+
+    asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
+    ejecutar(f'UPDATE categoria SET {asignaciones} WHERE id_categoria = ?',
+             tuple(list(cambios.values()) + [id_categoria]))
+
+
+def productos_de_categoria(id_categoria: int) -> int:
+    """Cuenta cuántos productos dependen de una categoría."""
+    fila = consultar_una(
+        'SELECT COUNT(*) AS total FROM producto WHERE id_categoria = ?',
+        (id_categoria,))
+    return fila['total']
+
+
+def eliminar_categoria(id_categoria: int) -> None:
+    """Elimina una categoría que no tenga productos asociados."""
+    if productos_de_categoria(id_categoria) > 0:
+        raise ValueError(
+            'La categoría tiene productos asociados y no puede eliminarse.')
+    ejecutar('DELETE FROM categoria WHERE id_categoria = ?', (id_categoria,))
+
+
+def aplicar_caducidad_de_categoria(id_categoria: int) -> int:
+    """
+    Copia el indicador de caducidad de una categoría a sus productos.
+
+    Sirve para corregir una clasificación equivocada sin tener que
+    editar producto por producto. Devuelve cuántos productos cambiaron.
+    """
+    categoria = consultar_una(
+        'SELECT maneja_caducidad FROM categoria WHERE id_categoria = ?',
+        (id_categoria,))
+    if categoria is None:
+        return 0
+
+    with conexion_abierta() as conexion:
+        cursor = conexion.execute("""
+            UPDATE producto
+            SET maneja_caducidad = ?
+            WHERE id_categoria = ? AND maneja_caducidad <> ?
+        """, (categoria['maneja_caducidad'], id_categoria,
+              categoria['maneja_caducidad']))
+        return cursor.rowcount
