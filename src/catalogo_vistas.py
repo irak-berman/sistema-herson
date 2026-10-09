@@ -43,7 +43,8 @@ def seccion_busqueda(proveedores: list, categorias: list) -> None:
     columnas = st.columns([3, 2, 2])
 
     texto = columnas[0].text_input(
-        'Buscar producto', placeholder='Nombre o clave')
+        'Buscar producto', placeholder='Nombre o clave',
+        help='Escriba y presione Enter para filtrar')
 
     mapa_proveedores = opciones(proveedores, 'id_proveedor', 'nombre')
     proveedor = columnas[1].selectbox(
@@ -116,10 +117,10 @@ def seccion_alta(proveedores: list, categorias: list,
             help='Cantidad en unidad base. Si la unidad es pieza y tiene 3 '
                  'cajas de 100, capture 300.')
         costo = columnas[2].number_input(
-            'Costo unitario', min_value=0.0, value=None,
+            'Costo unitario ($)', min_value=0.0, value=None,
             placeholder='0.00', format='%.2f')
         precio = columnas[3].number_input(
-            'Precio de venta', min_value=0.0, value=None,
+            'Precio de venta ($)', min_value=0.0, value=None,
             placeholder='0.00', format='%.2f')
 
         enviado = st.form_submit_button('Dar de alta', type='primary')
@@ -163,7 +164,14 @@ def seccion_edicion(unidades_activas: list) -> None:
         f'{p["clave_interna"]}  ·  {p["descripcion"]}': p['id_producto']
         for p in productos
     }
-    elegido = st.selectbox('Producto a editar', list(etiquetas))
+    elegido = st.selectbox(
+        'Producto a editar', list(etiquetas), index=None,
+        placeholder='Escriba parte del nombre o de la clave',
+        help='Dé clic y escriba para filtrar la lista')
+    if elegido is None:
+        st.info('Elija el producto que desea modificar.')
+        return
+
     id_producto = etiquetas[elegido]
     producto = repo.obtener_producto(id_producto)
 
@@ -177,11 +185,15 @@ def seccion_edicion(unidades_activas: list) -> None:
         descripcion = st.text_input('Descripción', value=producto['descripcion'])
 
         columnas = st.columns(4)
+        # El costo se guarda con toda su precisión. Se muestra
+        # redondeado y solo se reescribe si el usuario lo modifica, para
+        # no perder decimales al abrir la pantalla sin tocar nada.
+        costo_guardado = float(producto['costo_unitario'])
         costo = columnas[0].number_input(
-            'Costo unitario', min_value=0.0, format='%.2f',
-            value=float(producto['costo_unitario']))
+            'Costo unitario ($)', min_value=0.0, format='%.2f',
+            value=round(costo_guardado, 2))
         precio = columnas[1].number_input(
-            'Precio de venta', min_value=0.0, format='%.2f',
+            'Precio de venta ($)', min_value=0.0, format='%.2f',
             value=float(producto['precio_venta']))
         minima = columnas[2].number_input(
             'Existencia mínima', min_value=0, step=1,
@@ -190,16 +202,30 @@ def seccion_edicion(unidades_activas: list) -> None:
         activo = columnas[3].checkbox('Producto activo',
                                       value=bool(producto['activo']))
 
+        caduca_actual = bool(repo.consultar_una(
+            'SELECT maneja_caducidad FROM producto WHERE id_producto = ?',
+            (id_producto,))['maneja_caducidad'])
+        caduca = st.checkbox(
+            'Este producto maneja lote y fecha de caducidad',
+            value=caduca_actual,
+            help='Si está marcado, al recibir mercancía se pedirán el '
+                 'número de lote y la fecha de caducidad.')
+
         guardar = st.form_submit_button('Guardar cambios', type='primary')
 
     if guardar:
+        # Si el usuario no tocó el costo, se conserva el valor original
+        # con todos sus decimales.
+        costo_final = (costo_guardado if round(costo_guardado, 2) == costo
+                       else costo)
         repo.actualizar_producto(
             id_producto,
             descripcion=descripcion.strip(),
-            costo_unitario=costo,
+            costo_unitario=costo_final,
             precio_venta=precio,
             existencia_minima=minima,
             activo=1 if activo else 0,
+            maneja_caducidad=1 if caduca else 0,
         )
         st.success('Cambios guardados.')
         st.rerun()
@@ -229,7 +255,7 @@ def seccion_edicion(unidades_activas: list) -> None:
                     'Equivale a', min_value=0.01, value=float(p['factor']),
                     key=f'f_pres_{p["id_presentacion"]}')
                 precio_edit = columnas[1].number_input(
-                    'Precio', min_value=0.0, format='%.2f',
+                    'Precio ($)', min_value=0.0, format='%.2f',
                     value=float(p['precio_venta']),
                     key=f'p_pres_{p["id_presentacion"]}')
 
@@ -267,7 +293,7 @@ def seccion_edicion(unidades_activas: list) -> None:
             help=f'Cuántas {producto["unidad_plural"]} entrega esta '
                  f'presentación')
         precio_pres = columnas[2].number_input(
-            'Precio', min_value=0.0, value=None,
+            'Precio ($)', min_value=0.0, value=None,
             placeholder='0.00', format='%.2f')
 
         agregar = st.form_submit_button('Agregar presentación')

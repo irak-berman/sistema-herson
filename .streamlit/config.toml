@@ -15,7 +15,10 @@ font = "sans serif"
 [server]
 # El sistema opera en una sola computadora, sin exponerse a la red.
 address = "localhost"
-headless = false
+
+# Streamlit no abre el navegador por su cuenta. De eso se encarga el
+# archivo iniciar.bat, que lo abre en una ventana de aplicación.
+headless = true
 
 [browser]
 # No se envían estadísticas de uso a servidores externos.

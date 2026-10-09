@@ -33,9 +33,6 @@ st.set_page_config(
 # Ajustes visuales.
 ESTILOS = """
 <style>
-    /* Avisos de "pulse Enter", que se encimaban con el texto escrito */
-    [data-testid="InputInstructions"] { display: none; }
-
     /* Botones de incremento de los campos numéricos, que estorban al
        capturar precios y cantidades */
     [data-testid="stNumberInputStepUp"],
@@ -76,6 +73,10 @@ PANTALLAS = {
         st.Page('paginas/cat_alta.py', title='Dar de alta', icon='➕'),
         st.Page('paginas/cat_editar.py', title='Editar', icon='✏️'),
         st.Page('paginas/cat_apoyo.py', title='Catálogos de apoyo', icon='🗂️'),
+    ],
+    'Inventario': [
+        st.Page('paginas/entradas.py', title='Recepción', icon='📥'),
+        st.Page('paginas/movimientos.py', title='Movimientos', icon='🧾'),
     ],
 }
 

@@ -757,3 +757,115 @@ def productos_desalineados(id_categoria: int) -> int:
           AND p.maneja_caducidad <> c.maneja_caducidad
     """, (id_categoria,))
     return fila['total']
+
+
+def obtener_lote(id_lote: int):
+    """Devuelve un lote con su existencia calculada, o None."""
+    return consultar_una("""
+        SELECT
+            l.id_lote,
+            l.id_producto,
+            l.numero_lote,
+            l.fecha_caducidad,
+            l.fecha_entrada,
+            l.observaciones,
+            COALESCE(SUM(m.cantidad), 0) AS existencia_lote
+        FROM lote l
+        LEFT JOIN movimiento m ON m.id_lote = l.id_lote
+        WHERE l.id_lote = ?
+        GROUP BY l.id_lote
+    """, (id_lote,))
+
+
+def actualizar_lote(id_lote: int, numero_lote: str = None,
+                    fecha_caducidad: str = None,
+                    observaciones: str = None) -> None:
+    """
+    Corrige los datos descriptivos de un lote.
+
+    El número y la fecha no afectan la existencia ni el importe, por lo
+    que pueden corregirse directamente. Las cantidades, en cambio, se
+    corrigen con un ajuste que deja constancia.
+    """
+    cambios = {}
+    if numero_lote is not None:
+        cambios['numero_lote'] = numero_lote.strip() or None
+    if fecha_caducidad is not None:
+        cambios['fecha_caducidad'] = fecha_caducidad or None
+    if observaciones is not None:
+        cambios['observaciones'] = observaciones.strip() or None
+    if not cambios:
+        return
+
+    asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
+    ejecutar(f'UPDATE lote SET {asignaciones} WHERE id_lote = ?',
+             tuple(list(cambios.values()) + [id_lote]))
+
+
+def obtener_movimiento(id_movimiento: int):
+    """Devuelve un movimiento con los datos de su producto, o None."""
+    return consultar_una("""
+        SELECT
+            m.*,
+            p.clave_interna,
+            p.descripcion,
+            u.nombre AS unidad,
+            u.plural AS unidad_plural,
+            l.numero_lote
+        FROM movimiento m
+        JOIN producto p ON p.id_producto = m.id_producto
+        JOIN unidad   u ON u.id_unidad   = p.id_unidad
+        LEFT JOIN lote l ON l.id_lote = m.id_lote
+        WHERE m.id_movimiento = ?
+    """, (id_movimiento,))
+
+
+def movimientos_recientes(limite: int = 50, referencia: str = None) -> list:
+    """
+    Devuelve los movimientos más recientes de todo el inventario.
+
+    Permite filtrar por referencia para recuperar los renglones de una
+    factura y revisar lo que se capturó en ella.
+    """
+    condicion = 'WHERE m.referencia = ?' if referencia else ''
+    parametros = (referencia, limite) if referencia else (limite,)
+    return consultar(f"""
+        SELECT
+            m.id_movimiento,
+            m.tipo,
+            m.cantidad,
+            m.costo_unitario,
+            m.fecha,
+            m.referencia,
+            m.observaciones,
+            m.id_lote,
+            p.id_producto,
+            p.clave_interna,
+            p.descripcion,
+            u.nombre AS unidad,
+            u.plural AS unidad_plural,
+            l.numero_lote,
+            l.fecha_caducidad
+        FROM movimiento m
+        JOIN producto p ON p.id_producto = m.id_producto
+        JOIN unidad   u ON u.id_unidad   = p.id_unidad
+        LEFT JOIN lote l ON l.id_lote = m.id_lote
+        {condicion}
+        ORDER BY m.fecha DESC, m.id_movimiento DESC
+        LIMIT ?
+    """, parametros)
+
+
+def referencias_recientes(limite: int = 30) -> list:
+    """Devuelve las últimas referencias de entrada registradas."""
+    return consultar("""
+        SELECT
+            referencia,
+            COUNT(*)      AS renglones,
+            MAX(fecha)    AS fecha
+        FROM movimiento
+        WHERE tipo = 'entrada' AND referencia IS NOT NULL
+        GROUP BY referencia
+        ORDER BY fecha DESC
+        LIMIT ?
+    """, (limite,))

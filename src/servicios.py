@@ -13,7 +13,7 @@ Estadía profesional, Ingeniería en Sistemas Computacionales, UVEG
 import math
 
 import repositorio as repo
-from conexion import conexion_abierta
+from conexion import conexion_abierta, consultar_una
 
 # Porcentaje de la existencia inicial que define la mínima por producto.
 # Criterio acordado con el propietario, descrito en el documento del
@@ -327,3 +327,212 @@ def alta_rapida(descripcion: str, id_categoria: int, id_proveedor: int,
         )
 
     return id_producto
+
+
+# =====================================================================
+# Recepción de mercancía por factura
+# =====================================================================
+
+
+def calcular_costo_unitario(importe: float, piezas_cobradas: float,
+                            piezas_bonificadas: float = 0,
+                            incluye_iva: bool = True,
+                            tasa_iva: float = 0.16) -> float:
+    """
+    Calcula el costo real de cada pieza recibida.
+
+    Reproduce la operación que el propietario hace hoy con calculadora.
+    El importe se reparte entre todas las piezas que entraron al
+    almacén, incluidas las bonificadas, porque esas también se venden y
+    abaratan el costo del lote completo.
+
+    Ejemplo documentado en el diagnóstico: 27,525.03 pesos entre 240
+    piezas, de las cuales 40 fueron bonificadas, da 114.69 pesos por
+    pieza. El valor se guarda con toda su precisión y se redondea solo
+    al mostrarlo, de modo que el inventario valuado cuadre contra las
+    facturas y el usuario no vea cifras ilegibles.
+    """
+    recibidas = piezas_cobradas + piezas_bonificadas
+    if recibidas <= 0:
+        raise ReglaDeNegocio('Debe recibirse al menos una pieza')
+    if importe < 0:
+        raise ReglaDeNegocio('El importe no puede ser negativo')
+
+    total = importe if incluye_iva else importe * (1 + tasa_iva)
+    return total / recibidas
+
+
+def preparar_recepcion(id_producto: int, piezas_cobradas: float,
+                       piezas_bonificadas: float = 0, importe: float = None,
+                       costo_unitario: float = None, incluye_iva: bool = True,
+                       numero_lote: str = None,
+                       fecha_caducidad: str = None) -> dict:
+    """
+    Arma un renglón de recepción sin escribir nada en la base.
+
+    El costo puede capturarse ya calculado o derivarse del importe de la
+    factura. Si se dan los dos, manda el importe, porque es el dato que
+    viene del documento del proveedor.
+    """
+    producto = repo.obtener_producto(id_producto)
+    if producto is None:
+        raise ReglaDeNegocio('El producto no existe')
+
+    # El indicador de caducidad vive en la tabla y no en la vista de
+    # existencia, que está pensada para la consulta diaria.
+    fila = consultar_una(
+        'SELECT maneja_caducidad FROM producto WHERE id_producto = ?',
+        (id_producto,))
+    maneja_caducidad = bool(fila['maneja_caducidad'])
+
+    recibidas = piezas_cobradas + piezas_bonificadas
+    if recibidas <= 0:
+        raise ReglaDeNegocio('Debe recibirse al menos una pieza')
+
+    if importe is not None:
+        costo = calcular_costo_unitario(
+            importe, piezas_cobradas, piezas_bonificadas, incluye_iva)
+    elif costo_unitario is not None:
+        costo = costo_unitario
+    else:
+        costo = producto['costo_unitario']
+
+    return {
+        'id_producto': id_producto,
+        'clave_interna': producto['clave_interna'],
+        'descripcion': producto['descripcion'],
+        'unidad': producto['unidad_base'],
+        'unidad_plural': producto['unidad_plural'],
+        'maneja_caducidad': maneja_caducidad,
+        'piezas_cobradas': piezas_cobradas,
+        'piezas_bonificadas': piezas_bonificadas,
+        'recibidas': recibidas,
+        'importe': importe,
+        'costo_unitario': costo,
+        'costo_anterior': producto['costo_unitario'],
+        'numero_lote': numero_lote,
+        'fecha_caducidad': fecha_caducidad,
+    }
+
+
+def recibir_factura(renglones: list, referencia: str = None,
+                    observaciones: str = None) -> dict:
+    """
+    Registra la recepción completa de una factura en una sola operación.
+
+    Por cada renglón crea el lote cuando corresponde, registra la
+    entrada por el total de piezas recibidas y actualiza el costo del
+    producto. Si algo falla a la mitad, no queda nada escrito, de modo
+    que no exista una entrada de inventario sin su respaldo documental.
+    """
+    if not renglones:
+        raise ReglaDeNegocio('La recepción no tiene renglones')
+
+    with conexion_abierta() as conexion:
+        for renglon in renglones:
+            id_lote = None
+            if renglon['maneja_caducidad'] or renglon['numero_lote'] \
+                    or renglon['fecha_caducidad']:
+                cursor = conexion.execute("""
+                    INSERT INTO lote
+                        (id_producto, numero_lote, fecha_caducidad)
+                    VALUES (?, ?, ?)
+                """, (renglon['id_producto'], renglon['numero_lote'],
+                      renglon['fecha_caducidad']))
+                id_lote = cursor.lastrowid
+
+            conexion.execute("""
+                INSERT INTO movimiento
+                    (id_producto, id_lote, tipo, cantidad, costo_unitario,
+                     referencia, observaciones)
+                VALUES (?, ?, 'entrada', ?, ?, ?, ?)
+            """, (renglon['id_producto'], id_lote, renglon['recibidas'],
+                  renglon['costo_unitario'], referencia, observaciones))
+
+            conexion.execute(
+                'UPDATE producto SET costo_unitario = ? WHERE id_producto = ?',
+                (renglon['costo_unitario'], renglon['id_producto']))
+
+    total = sum(r['importe'] or 0 for r in renglones)
+    return {
+        'renglones': len(renglones),
+        'piezas': sum(r['recibidas'] for r in renglones),
+        'importe': round(total, 2),
+    }
+
+
+# =====================================================================
+# Corrección de movimientos
+# =====================================================================
+
+
+def corregir_cantidad(id_movimiento: int, cantidad_correcta: float,
+                      motivo: str = None) -> dict:
+    """
+    Corrige la cantidad de un movimiento ya registrado.
+
+    No modifica el movimiento original, porque alterarlo dejaría un
+    inventario que no puede explicar su propia historia. En su lugar
+    genera un ajuste por la diferencia, que queda visible en el
+    historial con el motivo de la corrección.
+    """
+    movimiento = repo.obtener_movimiento(id_movimiento)
+    if movimiento is None:
+        raise ReglaDeNegocio('El movimiento no existe')
+
+    registrada = abs(movimiento['cantidad'])
+    if cantidad_correcta < 0:
+        raise ReglaDeNegocio('La cantidad no puede ser negativa')
+
+    diferencia = cantidad_correcta - registrada
+    if diferencia == 0:
+        return {'diferencia': 0, 'id_ajuste': None}
+
+    # El ajuste conserva el signo del movimiento corregido. Si una
+    # entrada de 240 debía ser de 200, el ajuste resta 40. Si una salida
+    # de 100 debía ser de 80, el ajuste suma 20.
+    signo = 1 if movimiento['cantidad'] > 0 else -1
+    ajuste = signo * diferencia
+
+    nota = f'Corrección del movimiento {id_movimiento}'
+    if motivo:
+        nota += f'. {motivo}'
+
+    # Se inserta directamente porque registrar_movimiento normaliza el
+    # signo según el tipo, y aquí el signo ya viene calculado.
+    with conexion_abierta() as conexion:
+        cursor = conexion.execute("""
+            INSERT INTO movimiento
+                (id_producto, id_lote, tipo, cantidad, referencia,
+                 observaciones)
+            VALUES (?, ?, 'ajuste', ?, ?, ?)
+        """, (movimiento['id_producto'], movimiento['id_lote'], ajuste,
+              movimiento['referencia'], nota))
+        id_ajuste = cursor.lastrowid
+
+    return {'diferencia': ajuste, 'id_ajuste': id_ajuste}
+
+
+def corregir_costo(id_movimiento: int, costo_correcto: float,
+                   actualizar_producto: bool = True) -> None:
+    """
+    Corrige el costo registrado en una entrada.
+
+    El costo es un dato informativo del movimiento y no afecta la
+    existencia, por lo que puede corregirse directamente. Si se indica,
+    también actualiza el costo vigente del producto.
+    """
+    movimiento = repo.obtener_movimiento(id_movimiento)
+    if movimiento is None:
+        raise ReglaDeNegocio('El movimiento no existe')
+    if costo_correcto < 0:
+        raise ReglaDeNegocio('El costo no puede ser negativo')
+
+    with conexion_abierta() as conexion:
+        conexion.execute(
+            'UPDATE movimiento SET costo_unitario = ? WHERE id_movimiento = ?',
+            (costo_correcto, id_movimiento))
+        if actualizar_producto:
+            conexion.execute(
+                'UPDATE producto SET costo_unitario = ? WHERE id_producto = ?',
+                (costo_correcto, movimiento['id_producto']))
