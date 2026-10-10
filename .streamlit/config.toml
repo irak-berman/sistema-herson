@@ -1,15 +1,19 @@
 # Tema visual del sistema de inventario del Depósito Dental HERSON.
 #
-# Se define un azul institucional como color principal en lugar del rojo
-# que Streamlit usa por omisión. El rojo queda reservado para las
-# acciones que destruyen o cancelan información, de modo que el usuario
-# distinga de un vistazo lo que es seguro de lo que no.
+# El color principal es el mismo azul del logotipo del negocio, para que
+# el sistema y la nota de venta se perciban como una sola cosa. El rojo
+# queda reservado para las acciones que destruyen o cancelan
+# información, de modo que el usuario distinga de un vistazo lo que es
+# seguro de lo que no.
 
 [theme]
-primaryColor = "#1F3864"
+primaryColor = "#2B2C6B"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F2F5FA"
-textColor = "#1A1A1A"
+secondaryBackgroundColor = "#F4F5FA"
+textColor = "#1A1D29"
+
+# Se usa la familia del sistema y no una fuente descargada, porque el
+# sistema debe operar sin conexión a internet.
 font = "sans serif"
 
 [server]
@@ -23,3 +27,9 @@ headless = true
 [browser]
 # No se envían estadísticas de uso a servidores externos.
 gatherUsageStats = false
+
+[client]
+# Durante el desarrollo conviene ver el error completo en pantalla.
+# Al instalar en el depósito, este valor cambia a "none" para que el
+# personal no se encuentre con un rastreo técnico mientras vende.
+showErrorDetails = "full"
