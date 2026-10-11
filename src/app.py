@@ -62,22 +62,39 @@ ESTILOS = """
     [data-testid="stDecoration"] { display: none; }
     [data-testid="stToolbar"] { visibility: hidden; }
 
+    /* La franja superior de Streamlit queda fija sobre el contenido y
+       conserva su altura aunque su contenido esté oculto. Se reduce y se
+       vuelve transparente, pero no se elimina, porque aloja el botón que
+       pliega la barra lateral. */
+    [data-testid="stHeader"] {
+        background: transparent;
+        height: 3rem;
+    }
+
     /* ----- Ritmo vertical y tipografía ----- */
 
     /* El título de página ocupaba casi un tercio de la ventana. En una
        herramienta de trabajo el usuario ya sabe en qué sección está,
        porque el menú lateral se lo indica: lo primero que necesita ver
        son los datos. El ancho máximo evita líneas de texto demasiado
-       largas en monitores grandes. */
+       largas en monitores grandes.
+
+       El relleno superior debe quedar por debajo de la franja fija de
+       Streamlit, de lo contrario el título se recorta por arriba. Tres
+       rem y cuarto la libran y siguen siendo mucho menos que el valor
+       por omisión. */
     .block-container {
-        padding-top: 1.9rem;
+        padding-top: 3.25rem;
         padding-bottom: 3rem;
         max-width: 1400px;
     }
 
+    /* La altura de línea se declara de forma explícita porque con el
+       valor ajustado las mayúsculas acentuadas se cortan por arriba. */
     h1 {
         font-size: 1.65rem !important;
         font-weight: 600 !important;
+        line-height: 1.35 !important;
         letter-spacing: -0.01em;
         padding-top: 0 !important;
         padding-bottom: 0.3rem !important;
@@ -117,6 +134,20 @@ ESTILOS = """
     .stFormSubmitButton button {
         border-radius: 8px;
         font-weight: 500;
+    }
+
+    /* Los botones que quitan algo se marcan en rojo, para que no se
+       confundan con los que guardan. Streamlit convierte la clave de
+       cada control en una clase, y eso permite teñir solo estos sin
+       tocar los demás botones del sistema. */
+    [class*="st-key-vta_quitar_"] button {
+        color: #B3261E;
+        border-color: #EFD6D3;
+    }
+    [class*="st-key-vta_quitar_"] button:hover {
+        color: #8C1D18;
+        border-color: #B3261E;
+        background-color: #FDF4F3;
     }
 
     /* ----- Agrupadores ----- */
@@ -165,6 +196,14 @@ PANTALLAS = {
         st.Page('paginas/inicio.py', title='Inicio',
                 icon=':material/space_dashboard:', default=True),
     ],
+    # Ventas va antes que el catálogo porque es lo que se usa todo el
+    # día. Lo más frecuente debe quedar más cerca del inicio del menú.
+    'Ventas': [
+        st.Page('paginas/venta.py', title='Registrar venta',
+                icon=':material/point_of_sale:'),
+        st.Page('paginas/ventas_dia.py', title='Corte del día',
+                icon=':material/calendar_today:'),
+    ],
     'Catálogo': [
         st.Page('paginas/cat_buscar.py', title='Buscar',
                 icon=':material/search:'),
@@ -174,6 +213,8 @@ PANTALLAS = {
                 icon=':material/edit:'),
         st.Page('paginas/cat_apoyo.py', title='Catálogos de apoyo',
                 icon=':material/category:'),
+        st.Page('paginas/cat_precios.py', title='Cambios de precio',
+                icon=':material/price_change:'),
     ],
     'Inventario': [
         st.Page('paginas/entradas.py', title='Recepción',

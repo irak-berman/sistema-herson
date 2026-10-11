@@ -9,6 +9,7 @@ modelo se corrige en un solo lugar y no en cada pantalla.
 Autor: Irak Berman Gutiérrez
 Estadía profesional, Ingeniería en Sistemas Computacionales, UVEG
 """
+import sesion
 from conexion import conexion_abierta, consultar, consultar_una, ejecutar
 
 # =====================================================================
@@ -239,31 +240,133 @@ def crear_producto(descripcion: str, id_categoria: int, id_unidad: int,
           existencia_minima, 1 if maneja_caducidad else 0))
 
 
-def actualizar_producto(id_producto: int, **campos) -> None:
+def actualizar_producto(id_producto: int, motivo: str = None,
+                        usuario: str = None, **campos) -> None:
     """
     Modifica los campos indicados de un producto.
 
     Solo se aceptan campos de una lista fija, para que un error de
     escritura no termine armando una sentencia inválida.
+
+    Si cambia el precio de venta o el costo, queda constancia en
+    precio_historial. La regla del negocio es que al vender no se
+    altera el precio, solo se concede descuento, porque el descuento se
+    nota. Esa regla quedaría a medias si el precio del catálogo pudiera
+    moverse sin dejar huella.
+
+    El registro se guarda junto con el cambio, dentro de la misma
+    transacción, para que no exista el caso de un precio modificado sin
+    su rastro.
     """
     PERMITIDOS = {
         'descripcion', 'clave_proveedor', 'id_categoria', 'id_proveedor',
         'id_unidad', 'costo_unitario', 'precio_venta',
         'existencia_minima', 'maneja_caducidad', 'activo'
     }
+    RASTREADOS = ('precio_venta', 'costo_unitario')
+
     cambios = {c: v for c, v in campos.items() if c in PERMITIDOS}
     if not cambios:
         return
 
+    anterior = obtener_producto(id_producto)
+    if anterior is None:
+        return
+
+    quien = usuario or sesion.usuario_actual()
     asignaciones = ', '.join(f'{campo} = ?' for campo in cambios)
-    valores = list(cambios.values()) + [id_producto]
-    ejecutar(f'UPDATE producto SET {asignaciones} WHERE id_producto = ?',
-             tuple(valores))
+
+    with conexion_abierta() as conexion:
+        conexion.execute(
+            f'UPDATE producto SET {asignaciones} WHERE id_producto = ?',
+            tuple(list(cambios.values()) + [id_producto]))
+
+        for campo in RASTREADOS:
+            if campo not in cambios:
+                continue
+
+            valor_nuevo = cambios[campo]
+            valor_anterior = anterior[campo]
+
+            # Abrir la pantalla de edición y guardar sin tocar el
+            # precio no es un cambio de precio. Sin esta comparación el
+            # historial se llenaría de renglones que dicen lo mismo dos
+            # veces y dejaría de servir para revisarlo.
+            if valor_anterior is not None and valor_nuevo is not None:
+                if abs(float(valor_anterior) - float(valor_nuevo)) < 1e-9:
+                    continue
+
+            conexion.execute("""
+                INSERT INTO precio_historial
+                    (id_producto, campo, valor_anterior, valor_nuevo,
+                     usuario, motivo)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (id_producto, campo, valor_anterior, valor_nuevo,
+                  quien, motivo))
 
 
 # =====================================================================
 # Presentaciones
 # =====================================================================
+
+
+def historial_de_precio(id_producto: int, limite: int = 50) -> list:
+    """
+    Devuelve los cambios de precio y de costo de un producto, del más
+    reciente al más antiguo.
+
+    Incluye los de sus presentaciones, porque para quien revisa son el
+    mismo asunto: qué se movió, cuándo y quién lo movió.
+    """
+    return consultar("""
+        SELECT
+            h.id_historial,
+            h.campo,
+            h.valor_anterior,
+            h.valor_nuevo,
+            h.valor_nuevo - COALESCE(h.valor_anterior, 0) AS diferencia,
+            h.fecha,
+            h.usuario,
+            h.motivo,
+            h.id_presentacion,
+            u.nombre AS presentacion
+        FROM precio_historial h
+        LEFT JOIN presentacion p ON p.id_presentacion = h.id_presentacion
+        LEFT JOIN unidad       u ON u.id_unidad       = p.id_unidad
+        WHERE h.id_producto = ?
+        ORDER BY h.fecha DESC, h.id_historial DESC
+        LIMIT ?
+    """, (id_producto, limite))
+
+
+def cambios_de_precio_recientes(limite: int = 50) -> list:
+    """
+    Devuelve los últimos cambios de precio de todo el catálogo.
+
+    Es la consulta que le sirve al propietario para revisar de un
+    vistazo si alguien movió precios, sin tener que entrar producto por
+    producto.
+    """
+    return consultar("""
+        SELECT
+            h.id_historial,
+            pr.clave_interna,
+            pr.descripcion,
+            h.campo,
+            h.valor_anterior,
+            h.valor_nuevo,
+            h.valor_nuevo - COALESCE(h.valor_anterior, 0) AS diferencia,
+            h.fecha,
+            h.usuario,
+            h.motivo,
+            u.nombre AS presentacion
+        FROM precio_historial h
+        JOIN producto pr ON pr.id_producto = h.id_producto
+        LEFT JOIN presentacion p ON p.id_presentacion = h.id_presentacion
+        LEFT JOIN unidad       u ON u.id_unidad       = p.id_unidad
+        ORDER BY h.fecha DESC, h.id_historial DESC
+        LIMIT ?
+    """, (limite,))
 
 
 def listar_presentaciones(id_producto: int) -> list:
@@ -397,13 +500,17 @@ def crear_lote(id_producto: int, numero_lote: str = None,
 def registrar_movimiento(id_producto: int, tipo: str, cantidad: float,
                          id_lote: int = None, costo_unitario: float = None,
                          referencia: str = None,
-                         observaciones: str = None) -> int:
+                         observaciones: str = None,
+                         usuario: str = None) -> int:
     """
     Registra un movimiento de inventario en unidad base.
 
     El signo lo define el tipo, no quien llama a la función. Las salidas
     y las mermas se guardan en negativo, de modo que la existencia sea
     siempre la suma de los movimientos.
+
+    El usuario se toma de la sesión cuando no se indica, de modo que
+    ninguna pantalla tenga que acordarse de pasarlo.
     """
     TIPOS = ('entrada', 'salida', 'ajuste', 'merma')
     if tipo not in TIPOS:
@@ -419,10 +526,10 @@ def registrar_movimiento(id_producto: int, tipo: str, cantidad: float,
     return ejecutar("""
         INSERT INTO movimiento
             (id_producto, id_lote, tipo, cantidad, costo_unitario,
-             referencia, observaciones)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+             referencia, observaciones, usuario)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (id_producto, id_lote, tipo, cantidad, costo_unitario,
-          referencia, observaciones))
+          referencia, observaciones, usuario or sesion.usuario_actual()))
 
 
 def registrar_ajuste(id_producto: int, existencia_contada: float,
@@ -515,6 +622,8 @@ def detalle_de_venta(id_venta: int) -> list:
             d.cantidad,
             d.cantidad_base,
             d.precio_unitario,
+            d.descuento,
+            (d.cantidad * d.precio_unitario) AS importe_bruto,
             d.importe
         FROM venta_detalle d
         JOIN producto p ON p.id_producto = d.id_producto
@@ -542,10 +651,11 @@ def ventas_del_dia(fecha: str = None) -> list:
             v.cliente,
             v.forma_pago,
             v.total,
+            v.cancelada,
             COUNT(d.id_detalle) AS renglones
         FROM venta v
         LEFT JOIN venta_detalle d ON d.id_venta = v.id_venta
-        WHERE {condicion}
+        WHERE {condicion} AND v.cancelada = 0
         GROUP BY v.id_venta
         ORDER BY v.fecha DESC
     """, parametros)
@@ -556,7 +666,9 @@ def creditos_pendientes() -> list:
     return consultar("""
         SELECT id_venta, folio, date(fecha) AS fecha, cliente, total
         FROM venta
-        WHERE forma_pago = 'credito' AND credito_pagado = 0
+        WHERE forma_pago = 'credito'
+          AND credito_pagado = 0
+          AND cancelada = 0
         ORDER BY fecha
     """)
 
@@ -682,12 +794,17 @@ def obtener_presentacion(id_presentacion: int):
 
 def actualizar_presentacion(id_presentacion: int, nombre: int = None,
                             factor: float = None, precio_venta: float = None,
-                            es_predeterminada: bool = None) -> None:
+                            es_predeterminada: bool = None,
+                            motivo: str = None, usuario: str = None) -> None:
     """
     Modifica una presentación.
 
     Al marcar una como predeterminada, las demás del mismo producto
     dejan de serlo, porque solo puede ofrecerse una primero al vender.
+
+    El cambio de precio queda registrado igual que el del producto. Una
+    caja tiene su propio precio, así que sin esto bastaría con editar la
+    presentación para mover lo que se cobra sin dejar rastro.
     """
     cambios = {}
     if nombre is not None:
@@ -717,6 +834,21 @@ def actualizar_presentacion(id_presentacion: int, nombre: int = None,
         conexion.execute(
             f'UPDATE presentacion SET {asignaciones} WHERE id_presentacion = ?',
             tuple(list(cambios.values()) + [id_presentacion]))
+
+        if 'precio_venta' in cambios:
+            anterior = presentacion['precio_venta']
+            nuevo = cambios['precio_venta']
+            distinto = (anterior is None or nuevo is None
+                        or abs(float(anterior) - float(nuevo)) >= 1e-9)
+            if distinto:
+                conexion.execute("""
+                    INSERT INTO precio_historial
+                        (id_producto, id_presentacion, campo,
+                         valor_anterior, valor_nuevo, usuario, motivo)
+                    VALUES (?, ?, 'precio_venta', ?, ?, ?, ?)
+                """, (presentacion['id_producto'], id_presentacion,
+                      anterior, nuevo,
+                      usuario or sesion.usuario_actual(), motivo))
 
 
 def ventas_con_presentacion(id_presentacion: int) -> int:
@@ -838,6 +970,7 @@ def movimientos_recientes(limite: int = 50, referencia: str = None) -> list:
             m.fecha,
             m.referencia,
             m.observaciones,
+            m.usuario,
             m.id_lote,
             p.id_producto,
             p.clave_interna,

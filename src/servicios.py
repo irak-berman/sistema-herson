@@ -13,6 +13,7 @@ Estadía profesional, Ingeniería en Sistemas Computacionales, UVEG
 import math
 
 import repositorio as repo
+import sesion
 from conexion import conexion_abierta, consultar_una
 
 # Porcentaje de la existencia inicial que define la mínima por producto.
@@ -89,7 +90,10 @@ def recibir_mercancia(id_producto: int, cantidad: float,
     )
 
     if costo_unitario is not None and costo_unitario != producto['costo_unitario']:
-        repo.actualizar_producto(id_producto, costo_unitario=costo_unitario)
+        repo.actualizar_producto(
+            id_producto, costo_unitario=costo_unitario,
+            motivo=f'Costo de la recepción {referencia}' if referencia
+                   else 'Costo actualizado al recibir mercancía')
 
     return {
         'id_lote': id_lote,
@@ -103,13 +107,19 @@ def recibir_mercancia(id_producto: int, cantidad: float,
 
 
 def preparar_renglon(id_producto: int, cantidad: float,
-                     id_presentacion: int = None) -> dict:
+                     id_presentacion: int = None,
+                     descuento: float = 0) -> dict:
     """
     Arma un renglón de venta y calcula su equivalente en unidad base.
 
     Devuelve un diccionario con todo lo que la nota necesita, sin
     escribir nada en la base. La pantalla usa esto para ir formando el
     carrito antes de confirmar la venta.
+
+    El precio sale del catálogo y no se recibe como parámetro, porque
+    quien atiende el mostrador no modifica precios. Lo que sí puede
+    conceder es un descuento, que viaja aparte y queda a la vista en la
+    nota.
     """
     producto = repo.obtener_producto(id_producto)
     if producto is None:
@@ -133,6 +143,12 @@ def preparar_renglon(id_producto: int, cantidad: float,
 
     cantidad_base = convertir_a_unidad_base(cantidad, factor)
 
+    importe_bruto = round(cantidad * precio, 2)
+    descuento = round(max(0.0, float(descuento or 0)), 2)
+    if descuento > importe_bruto:
+        raise ReglaDeNegocio(
+            'El descuento no puede ser mayor que el importe del renglón')
+
     return {
         'id_producto': id_producto,
         'id_presentacion': id_presentacion,
@@ -142,9 +158,55 @@ def preparar_renglon(id_producto: int, cantidad: float,
         'cantidad': cantidad,
         'cantidad_base': cantidad_base,
         'precio_unitario': precio,
-        'importe': round(cantidad * precio, 2),
+        'importe_bruto': importe_bruto,
+        'descuento': descuento,
+        'importe': round(importe_bruto - descuento, 2),
         'existencia_actual': producto['existencia'],
     }
+
+
+def repartir_descuento(renglones: list, descuento_total: float) -> list:
+    """
+    Reparte una rebaja sobre el total de la nota entre sus renglones.
+
+    Cuando el propietario deja una nota en un número redondo, la rebaja
+    no corresponde a un producto en particular. Como el descuento se
+    guarda por renglón, hay que repartirlo, y se hace en proporción al
+    importe de cada uno para que ningún producto cargue con una rebaja
+    que no le toca.
+
+    Los centavos que sobran del redondeo se cargan al renglón de mayor
+    importe, de modo que la suma de los renglones dé exactamente la
+    rebaja concedida y no un centavo de más o de menos.
+
+    Devuelve una lista nueva. No modifica la que recibe.
+    """
+    descuento_total = round(max(0.0, float(descuento_total or 0)), 2)
+    copias = [dict(renglon) for renglon in renglones]
+    if descuento_total == 0 or not copias:
+        return copias
+
+    base = sum(renglon['importe'] for renglon in copias)
+    if descuento_total > base:
+        raise ReglaDeNegocio(
+            'El descuento no puede ser mayor que el total de la nota')
+    if base <= 0:
+        return copias
+
+    repartido = 0.0
+    for renglon in copias:
+        parte = round(descuento_total * renglon['importe'] / base, 2)
+        renglon['descuento'] = round(renglon.get('descuento', 0) + parte, 2)
+        renglon['importe'] = round(renglon['importe'] - parte, 2)
+        repartido = round(repartido + parte, 2)
+
+    sobrante = round(descuento_total - repartido, 2)
+    if sobrante != 0:
+        mayor = max(copias, key=lambda r: r['importe'])
+        mayor['descuento'] = round(mayor['descuento'] + sobrante, 2)
+        mayor['importe'] = round(mayor['importe'] - sobrante, 2)
+
+    return copias
 
 
 def validar_existencia(renglones: list) -> list:
@@ -200,6 +262,10 @@ def registrar_venta(renglones: list, forma_pago: str = 'efectivo',
     inventario. Si algo falla a la mitad, no queda nada escrito, de modo
     que nunca exista una nota sin productos ni un descuento de
     inventario sin venta que lo respalde.
+
+    El parámetro descuento es una rebaja sobre el total de la nota y se
+    reparte entre los renglones antes de guardar. Los descuentos que ya
+    traiga cada renglón se conservan y este se suma encima.
     """
     if not renglones:
         raise ReglaDeNegocio('La venta no tiene renglones')
@@ -208,13 +274,23 @@ def registrar_venta(renglones: list, forma_pago: str = 'efectivo',
     if forma_pago not in FORMAS:
         raise ReglaDeNegocio(f'Forma de pago no válida: {forma_pago}')
 
-    subtotal = sum(renglon['importe'] for renglon in renglones)
-    total = round(subtotal - descuento, 2)
-    if total < 0:
-        raise ReglaDeNegocio('El descuento no puede ser mayor que el total')
-
     if forma_pago == 'credito' and not (cliente or '').strip():
         raise ReglaDeNegocio('Una venta a crédito requiere el nombre del cliente')
+
+    # La rebaja global se convierte en rebaja por renglón, porque es ahí
+    # donde vive el descuento desde que el margen se analiza por
+    # producto.
+    renglones = repartir_descuento(renglones, descuento)
+
+    bruto = round(sum(renglon.get('importe_bruto',
+                                  renglon['importe'] + renglon.get('descuento', 0))
+                      for renglon in renglones), 2)
+    descuento = round(sum(renglon.get('descuento', 0)
+                          for renglon in renglones), 2)
+    subtotal = bruto
+    total = round(bruto - descuento, 2)
+    if total < 0:
+        raise ReglaDeNegocio('El descuento no puede ser mayor que el total')
 
     folio = repo.siguiente_folio()
 
@@ -229,29 +305,35 @@ def registrar_venta(renglones: list, forma_pago: str = 'efectivo',
         cursor = conexion.execute("""
             INSERT INTO venta
                 (folio, cliente, forma_pago, credito_pagado,
-                 requiere_factura, descuento, total, observaciones)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 requiere_factura, descuento, total, observaciones, usuario)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (folio, (cliente or '').strip() or None, forma_pago,
               0 if forma_pago == 'credito' else 1,
-              1 if requiere_factura else 0, descuento, total, observaciones))
+              1 if requiere_factura else 0, descuento, total, observaciones,
+              sesion.usuario_actual()))
         id_venta = cursor.lastrowid
+
+        quien = sesion.usuario_actual()
 
         for indice, renglon in enumerate(renglones):
             conexion.execute("""
                 INSERT INTO venta_detalle
                     (id_venta, id_producto, id_presentacion,
-                     cantidad, cantidad_base, precio_unitario, importe)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                     cantidad, cantidad_base, precio_unitario, importe,
+                     descuento)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (id_venta, renglon['id_producto'], renglon['id_presentacion'],
                   renglon['cantidad'], renglon['cantidad_base'],
-                  renglon['precio_unitario'], renglon['importe']))
+                  renglon['precio_unitario'], renglon['importe'],
+                  renglon.get('descuento', 0) or 0))
 
             conexion.execute("""
                 INSERT INTO movimiento
-                    (id_producto, id_lote, tipo, cantidad, referencia)
-                VALUES (?, ?, 'salida', ?, ?)
+                    (id_producto, id_lote, tipo, cantidad, referencia,
+                     usuario)
+                VALUES (?, ?, 'salida', ?, ?, ?)
             """, (renglon['id_producto'], lotes[indice],
-                  -renglon['cantidad_base'], folio))
+                  -renglon['cantidad_base'], folio, quien))
 
     return {'id_venta': id_venta, 'folio': folio,
             'subtotal': round(subtotal, 2), 'total': total}
@@ -262,33 +344,48 @@ def cancelar_venta(id_venta: int, motivo: str = None) -> None:
     Cancela una venta y devuelve la mercancía al inventario.
 
     No borra la venta, porque el folio ya se entregó al cliente. Genera
-    los movimientos inversos y deja constancia en las observaciones, de
-    modo que el histórico conserve lo que realmente ocurrió.
+    los movimientos inversos y marca el encabezado, de modo que el
+    histórico conserve lo que realmente ocurrió.
+
+    La marca es una columna y no una palabra dentro de las
+    observaciones. Con la columna, la vista que alimenta el tablero
+    puede dejar fuera las notas canceladas, que de otro modo seguirían
+    contando como ingreso y como utilidad.
+
+    El total del encabezado no se toca. Lo mantiene cuadrado con el
+    detalle un disparador de la base, y lo que saca la venta del
+    análisis es la marca, no un total puesto en cero.
     """
     venta = repo.obtener_venta(id_venta)
     if venta is None:
         raise ReglaDeNegocio('La venta no existe')
-    if (venta['observaciones'] or '').startswith('CANCELADA'):
+    if venta['cancelada']:
         raise ReglaDeNegocio('La venta ya estaba cancelada')
 
     renglones = repo.detalle_de_venta(id_venta)
+    quien = sesion.usuario_actual()
 
     with conexion_abierta() as conexion:
         for renglon in renglones:
             conexion.execute("""
                 INSERT INTO movimiento
-                    (id_producto, tipo, cantidad, referencia, observaciones)
+                    (id_producto, tipo, cantidad, referencia,
+                     observaciones, usuario)
                 VALUES (
                     (SELECT id_producto FROM producto WHERE clave_interna = ?),
-                    'ajuste', ?, ?, 'Cancelación de venta'
+                    'ajuste', ?, ?, 'Cancelación de venta', ?
                 )
             """, (renglon['clave_interna'], renglon['cantidad_base'],
-                  venta['folio']))
+                  venta['folio'], quien))
 
-        nota = f'CANCELADA. {motivo}' if motivo else 'CANCELADA'
-        conexion.execute(
-            'UPDATE venta SET observaciones = ?, total = 0 WHERE id_venta = ?',
-            (nota, id_venta))
+        conexion.execute("""
+            UPDATE venta
+               SET cancelada = 1,
+                   fecha_cancelacion = datetime('now', 'localtime'),
+                   usuario_cancelacion = ?,
+                   motivo_cancelacion = ?
+             WHERE id_venta = ?
+        """, (quien, motivo, id_venta))
 
 
 # =====================================================================
@@ -532,7 +629,32 @@ def corregir_costo(id_movimiento: int, costo_correcto: float,
         conexion.execute(
             'UPDATE movimiento SET costo_unitario = ? WHERE id_movimiento = ?',
             (costo_correcto, id_movimiento))
+
         if actualizar_producto:
+            # El costo anterior se lee antes de pisarlo, porque es lo
+            # que va al historial.
+            fila = conexion.execute(
+                'SELECT costo_unitario FROM producto WHERE id_producto = ?',
+                (movimiento['id_producto'],)).fetchone()
+            costo_anterior = fila['costo_unitario'] if fila else None
+
             conexion.execute(
                 'UPDATE producto SET costo_unitario = ? WHERE id_producto = ?',
                 (costo_correcto, movimiento['id_producto']))
+
+            # Esta función escribe con SQL directo y no pasa por
+            # repo.actualizar_producto, así que el registro del cambio
+            # se hace aquí. De otro modo, corregir el costo sería la
+            # única manera de mover dinero sin dejar rastro.
+            distinto = (costo_anterior is None
+                        or abs(float(costo_anterior) - costo_correcto) >= 1e-9)
+            if distinto:
+                conexion.execute("""
+                    INSERT INTO precio_historial
+                        (id_producto, campo, valor_anterior, valor_nuevo,
+                         usuario, motivo)
+                    VALUES (?, 'costo_unitario', ?, ?, ?, ?)
+                """, (movimiento['id_producto'], costo_anterior,
+                      costo_correcto, sesion.usuario_actual(),
+                      f'Corrección del costo en el movimiento '
+                      f'{id_movimiento}'))

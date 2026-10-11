@@ -23,6 +23,8 @@ erDiagram
     VENTA ||--|{ VENTA_DETALLE : contiene
     PRODUCTO ||--o{ VENTA_DETALLE : vende
     PRESENTACION ||--o{ VENTA_DETALLE : determina
+    PRODUCTO ||--o{ PRECIO_HISTORIAL : registra
+    PRESENTACION ||--o{ PRECIO_HISTORIAL : detalla
 
     PROVEEDOR {
         int id_proveedor PK
@@ -81,6 +83,7 @@ erDiagram
         text fecha
         text referencia
         text observaciones
+        text usuario
     }
 
     VENTA {
@@ -94,6 +97,7 @@ erDiagram
         real descuento
         real total
         text observaciones
+        text usuario
     }
 
     VENTA_DETALLE {
@@ -105,6 +109,19 @@ erDiagram
         real cantidad_base
         real precio_unitario
         real importe
+        real descuento
+    }
+
+    PRECIO_HISTORIAL {
+        int id_historial PK
+        int id_producto FK
+        int id_presentacion FK
+        text campo
+        real valor_anterior
+        real valor_nuevo
+        text fecha
+        text usuario
+        text motivo
     }
 ```
 
@@ -152,6 +169,30 @@ nombre solo cuando hay crédito o factura, por lo que se almacena como
 texto en la venta. Un catálogo de clientes sería construir algo que el
 negocio no utiliza.
 
+**El descuento se guarda por renglón y no por nota.** El propietario
+autorizó que quien atiende el mostrador conceda descuentos pero no
+modifique el precio, porque un descuento se nota a simple vista y un
+precio alterado no. Guardarlo en el encabezado impediría saber sobre qué
+producto se concedió, y el margen por producto, que es el indicador
+principal del tablero, saldría mal. Cuando se rebaja el total de una
+nota, el sistema reparte la rebaja entre los renglones en proporción a
+su importe. El total y el descuento del encabezado los recalculan
+disparadores a partir del detalle, de modo que no exista una nota cuyo
+encabezado no cuadre con sus renglones.
+
+**Cada operación guarda quién la hizo.** En el depósito trabajan tres
+personas y el sistema todavía no las distingue, por lo que la columna se
+llena con `sin identificar`. Se incorporó desde el inicio porque un
+histórico sin autor no puede reconstruirse después, y la separación de
+accesos quedó programada para el cierre del proyecto.
+
+**Los cambios de precio dejan constancia.** La regla de no alterar el
+precio al vender quedaría sin efecto si el precio del catálogo pudiera
+editarse sin rastro, ya que bastaría con modificarlo antes de cobrar.
+La tabla `precio_historial` conserva el valor anterior, el nuevo, la
+fecha, el autor y el motivo, tanto del precio de venta como del costo,
+porque un costo mal capturado desvía el margen igual que un precio.
+
 ## Vistas
 
 `v_existencia` entrega la existencia actual por producto a partir de la
@@ -166,4 +207,7 @@ de los siguientes 180 días, plazo definido por el propietario.
 
 `v_ventas_plano` entrega una fila por renglón vendido, ya desnormalizada
 y con la utilidad estimada calculada, que es la fuente del archivo que
-consume el tablero de Power BI.
+consume el tablero de Power BI. Separa el importe sin rebaja, la rebaja
+concedida y el importe cobrado, de modo que el tablero pueda medir
+cuánto se descuenta y sobre qué productos. La utilidad parte del importe
+ya rebajado, porque el descuento sale de la ganancia.

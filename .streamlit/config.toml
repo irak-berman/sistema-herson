@@ -20,9 +20,10 @@ font = "sans serif"
 # El sistema opera en una sola computadora, sin exponerse a la red.
 address = "localhost"
 
-# Streamlit no abre el navegador por su cuenta. De eso se encarga el
-# archivo iniciar.bat, que lo abre en una ventana de aplicación.
-headless = true
+# Aquí NO se pone headless. Si se pone, Streamlit deja de abrir el
+# navegador y al correrlo desde la terminal parece que no pasó nada.
+# El archivo iniciar.bat pasa esa opción por su cuenta, porque es el
+# único caso donde sí estorba que Streamlit abra una ventana extra.
 
 [browser]
 # No se envían estadísticas de uso a servidores externos.

@@ -201,6 +201,12 @@ CREATE TABLE movimiento (
     referencia      TEXT,
     observaciones   TEXT,
 
+    -- Quién capturó el movimiento. Mientras el sistema no distinga
+    -- usuarios queda en 'sin identificar', que es la verdad. La columna
+    -- existe desde el principio porque el día que haya control de
+    -- acceso el histórico anterior ya no se puede reconstruir.
+    usuario         TEXT    NOT NULL DEFAULT 'sin identificar',
+
     FOREIGN KEY (id_producto) REFERENCES producto (id_producto),
     FOREIGN KEY (id_lote)     REFERENCES lote (id_lote)
 );
@@ -232,9 +238,33 @@ CREATE TABLE venta (
     requiere_factura INTEGER NOT NULL DEFAULT 0
                      CHECK (requiere_factura IN (0, 1)),
 
+    -- Suma de los descuentos de los renglones. No se captura aquí: lo
+    -- calcula el sistema a partir del detalle. Se guarda en el
+    -- encabezado solo para no recorrer los renglones cada vez que se
+    -- muestra una nota.
     descuento        REAL    NOT NULL DEFAULT 0 CHECK (descuento >= 0),
+
     total            REAL    NOT NULL DEFAULT 0 CHECK (total >= 0),
-    observaciones    TEXT
+    observaciones    TEXT,
+
+    -- Quién levantó la nota. Ver la nota de la columna equivalente en
+    -- la tabla movimiento.
+    usuario          TEXT    NOT NULL DEFAULT 'sin identificar',
+
+    -- Una venta cancelada no se borra, porque el folio ya se entregó
+    -- al cliente. Se marca, y a partir de la marca queda fuera del
+    -- análisis de ventas, aunque siga existiendo con su detalle y sus
+    -- movimientos de reversa.
+    --
+    -- El estado vive en una columna propia y no en el texto de las
+    -- observaciones. Guardar una condición del negocio dentro de un
+    -- campo libre obliga a adivinarla leyendo texto, y basta con que
+    -- alguien escriba algo distinto para que deje de reconocerse.
+    cancelada           INTEGER NOT NULL DEFAULT 0
+                        CHECK (cancelada IN (0, 1)),
+    fecha_cancelacion   TEXT,
+    usuario_cancelacion TEXT,
+    motivo_cancelacion  TEXT
 );
 
 CREATE INDEX idx_venta_fecha ON venta (fecha);
@@ -244,6 +274,12 @@ CREATE INDEX idx_venta_fecha ON venta (fecha);
 -- Los renglones de la nota. Se guarda el precio del momento de la venta
 -- y no se lee del catálogo, porque los precios cambian y el histórico
 -- debe reflejar lo que realmente se cobró.
+--
+-- El descuento vive aquí y no en el encabezado. Puesto en la venta no
+-- se sabría sobre qué producto se aplicó, y el margen por producto, que
+-- es el indicador principal del tablero, saldría mal. Si se concede un
+-- descuento sobre el total de la nota, el sistema lo reparte entre los
+-- renglones de forma proporcional antes de guardarlo.
 -- ---------------------------------------------------------------------
 CREATE TABLE venta_detalle (
     id_detalle      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,8 +292,22 @@ CREATE TABLE venta_detalle (
     -- Cantidad convertida a unidad base, que es la que descuenta
     cantidad_base   REAL    NOT NULL CHECK (cantidad_base > 0),
 
+    -- El precio de catálogo del momento. La vendedora no lo modifica.
     precio_unitario REAL    NOT NULL CHECK (precio_unitario >= 0),
+
+    -- Lo que realmente se cobró por el renglón, ya con el descuento
+    -- restado: cantidad * precio_unitario - descuento. La suma de los
+    -- importes es el total de la nota.
     importe         REAL    NOT NULL CHECK (importe >= 0),
+
+    -- Rebaja concedida en este renglón, en pesos. Es lo único que se
+    -- puede mover al cobrar, y queda a la vista en la nota.
+    --
+    -- Va después de importe y no antes, que sería lo natural de leer,
+    -- para que una base creada desde este archivo y una base a la que
+    -- se le aplicó la migración queden con las columnas en el mismo
+    -- orden. SQLite solo sabe agregar columnas al final.
+    descuento       REAL    NOT NULL DEFAULT 0 CHECK (descuento >= 0),
 
     FOREIGN KEY (id_venta)        REFERENCES venta (id_venta) ON DELETE CASCADE,
     FOREIGN KEY (id_producto)     REFERENCES producto (id_producto),
@@ -266,6 +316,90 @@ CREATE TABLE venta_detalle (
 
 CREATE INDEX idx_detalle_venta    ON venta_detalle (id_venta);
 CREATE INDEX idx_detalle_producto ON venta_detalle (id_producto);
+
+-- ---------------------------------------------------------------------
+-- Disparadores: totales de la nota
+--
+-- El total y el descuento del encabezado se recalculan solos cada vez
+-- que cambian los renglones. Nada que escriba en la base puede dejar un
+-- encabezado que no cuadre con su detalle, ni siquiera una consulta
+-- hecha a mano.
+--
+-- Es el mismo criterio que con la existencia. El dato que se puede
+-- deducir no se captura, se deduce, porque dos copias del mismo número
+-- terminan separándose tarde o temprano.
+-- ---------------------------------------------------------------------
+CREATE TRIGGER trg_venta_totales_alta
+AFTER INSERT ON venta_detalle
+BEGIN
+    UPDATE venta
+       SET total     = (SELECT COALESCE(SUM(importe), 0)
+                          FROM venta_detalle WHERE id_venta = NEW.id_venta),
+           descuento = (SELECT COALESCE(SUM(descuento), 0)
+                          FROM venta_detalle WHERE id_venta = NEW.id_venta)
+     WHERE id_venta = NEW.id_venta;
+END;
+
+CREATE TRIGGER trg_venta_totales_cambio
+AFTER UPDATE ON venta_detalle
+BEGIN
+    UPDATE venta
+       SET total     = (SELECT COALESCE(SUM(importe), 0)
+                          FROM venta_detalle WHERE id_venta = NEW.id_venta),
+           descuento = (SELECT COALESCE(SUM(descuento), 0)
+                          FROM venta_detalle WHERE id_venta = NEW.id_venta)
+     WHERE id_venta = NEW.id_venta;
+END;
+
+CREATE TRIGGER trg_venta_totales_baja
+AFTER DELETE ON venta_detalle
+BEGIN
+    UPDATE venta
+       SET total     = (SELECT COALESCE(SUM(importe), 0)
+                          FROM venta_detalle WHERE id_venta = OLD.id_venta),
+           descuento = (SELECT COALESCE(SUM(descuento), 0)
+                          FROM venta_detalle WHERE id_venta = OLD.id_venta)
+     WHERE id_venta = OLD.id_venta;
+END;
+
+-- ---------------------------------------------------------------------
+-- Tabla: precio_historial
+-- Deja constancia de cada cambio de precio o de costo en el catálogo.
+--
+-- La regla del negocio es que el precio no se altera al vender, solo se
+-- concede descuento, porque el descuento se nota. Esa regla quedaría a
+-- medias si el precio del catálogo pudiera cambiarse sin dejar huella:
+-- bastaría con editarlo antes de cobrar. Con esta tabla, todo lo que
+-- mueve dinero deja rastro.
+--
+-- Guarda tanto el precio de venta como el costo, porque un costo mal
+-- capturado desvía el margen igual que un precio.
+-- ---------------------------------------------------------------------
+CREATE TABLE precio_historial (
+    id_historial    INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_producto     INTEGER NOT NULL,
+
+    -- Nulo cuando el cambio es al precio base del producto. Si el
+    -- cambio fue al precio de una presentación, aquí va cuál.
+    id_presentacion INTEGER,
+
+    campo           TEXT    NOT NULL
+                    CHECK (campo IN ('precio_venta', 'costo_unitario')),
+
+    -- Nulo solo cuando el producto no tenía valor previo
+    valor_anterior  REAL,
+    valor_nuevo     REAL    NOT NULL CHECK (valor_nuevo >= 0),
+
+    fecha           TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    usuario         TEXT    NOT NULL DEFAULT 'sin identificar',
+    motivo          TEXT,
+
+    FOREIGN KEY (id_producto)     REFERENCES producto (id_producto),
+    FOREIGN KEY (id_presentacion) REFERENCES presentacion (id_presentacion)
+);
+
+CREATE INDEX idx_precio_historial_producto ON precio_historial (id_producto);
+CREATE INDEX idx_precio_historial_fecha    ON precio_historial (fecha);
 
 -- =====================================================================
 -- VISTAS
@@ -354,11 +488,23 @@ SELECT
     c.nombre                             AS categoria,
     pr.nombre                            AS proveedor,
     COALESCE(up.nombre, u.nombre)        AS presentacion,
+    v.usuario,
     d.cantidad,
     d.cantidad_base,
     d.precio_unitario,
+
+    -- Lo que habría costado sin rebaja, la rebaja concedida y lo que
+    -- se cobró. Separarlos permite que el tablero mida cuánto se está
+    -- descontando y sobre qué productos, que es el dato que hoy no
+    -- existe en ningún lado.
+    (d.cantidad * d.precio_unitario)                 AS importe_bruto,
+    d.descuento,
     d.importe,
+
     p.costo_unitario,
+
+    -- La utilidad parte del importe ya rebajado, porque el descuento
+    -- sale de la ganancia y no del cliente.
     d.importe - (d.cantidad_base * p.costo_unitario) AS utilidad_estimada
 FROM venta_detalle d
 JOIN venta    v ON v.id_venta    = d.id_venta
@@ -367,4 +513,10 @@ JOIN unidad   u ON u.id_unidad   = p.id_unidad
 LEFT JOIN categoria    c    ON c.id_categoria       = p.id_categoria
 LEFT JOIN proveedor    pr   ON pr.id_proveedor      = p.id_proveedor
 LEFT JOIN presentacion pres ON pres.id_presentacion = d.id_presentacion
-LEFT JOIN unidad       up   ON up.id_unidad         = pres.id_unidad;
+LEFT JOIN unidad       up   ON up.id_unidad         = pres.id_unidad
+
+-- Las notas canceladas quedan fuera. Una venta que se deshizo no es una
+-- venta, y si apareciera aquí el tablero reportaría ingresos y utilidad
+-- que nunca ocurrieron. El filtro vive en la vista y no en Power BI
+-- para que nadie pueda olvidarlo.
+WHERE v.cancelada = 0;
