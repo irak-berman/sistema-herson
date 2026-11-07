@@ -73,80 +73,98 @@ def preparar_base(ruta: Path, productos: int = 50) -> None:
     return cnx
 
 
-with tempfile.TemporaryDirectory() as temporal:
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temporal:
     base_pruebas = Path(temporal) / 'basedatos'
     base_pruebas.mkdir()
     ruta_base = base_pruebas / 'herson.db'
 
     abierta = preparar_base(ruta_base)
     respaldo = cargar_modulo(base_pruebas)
-
-    print('El respaldo captura lo que está en el WAL')
-    # Una copia como la del explorador, con el WAL sin volcar.
-    copia_cruda = Path(temporal) / 'copia_explorador.db'
-    shutil.copy(ruta_base, copia_cruda)
-    cnx = sqlite3.connect(f'file:{copia_cruda}?mode=ro', uri=True)
-    cuantos_cruda = cnx.execute('SELECT COUNT(*) FROM producto').fetchone()[0]
-    cnx.close()
-
-    copia = respaldo.respaldar(verbose=False)
-    cnx = sqlite3.connect(f'file:{copia}?mode=ro', uri=True)
-    cuantos_copia = cnx.execute('SELECT COUNT(*) FROM producto').fetchone()[0]
-    cnx.close()
-
-    comprobar('la copia de archivo pierde lo que está en el WAL',
-              cuantos_cruda < 50, f'recuperó {cuantos_cruda} de 50')
-    comprobar('backup() recupera todo', cuantos_copia == 50,
-              f'recuperó {cuantos_copia} de 50')
-
-    print()
-    print('La copia es un archivo solo, sin acompañantes')
-    sobrantes = [p.name for p in copia.parent.iterdir()
-                 if p.name.startswith(copia.stem)
-                 and p.suffix in ('-wal', '-shm', '.parcial')
-                 or p.name.endswith(('-wal', '-shm', '.parcial'))]
-    comprobar('no quedan archivos -wal, -shm ni .parcial',
-              not sobrantes, f'quedaron {sobrantes}')
-
-    print()
-    print('Las conexiones se cierran de verdad')
-    # Este es el defecto que rompía el respaldo en Windows. Un
-    # `with sqlite3.connect(...)` no cierra: solo termina la
-    # transacción. La conexión seguía abierta y Windows no deja
-    # renombrar un archivo abierto.
-    with respaldo._solo_lectura(copia) as cnx_prueba:
-        cnx_prueba.execute('SELECT 1')
     try:
-        cnx_prueba.execute('SELECT 1')
-        cerrada = False
-    except sqlite3.ProgrammingError:
-        cerrada = True
-    comprobar('_solo_lectura cierra la conexión al salir', cerrada,
-              'la conexión seguía abierta, en Windows esto impide '
-              'renombrar el archivo')
 
-    print()
-    print('Las copias ajenas se respetan')
-    ajena = copia.parent / 'herson_antes_migracion_001_2026-10-09_195402.db'
-    ajena.write_bytes(b'')
-    comprobar('no cuenta como respaldo automático',
-              ajena not in respaldo.respaldos_existentes())
-    comprobar('sí aparece como copia ajena',
-              ajena in respaldo.respaldos_ajenos())
-    respaldo.listar()
-    comprobar('listar no truena con nombres ajenos', True)
+        print('El respaldo captura lo que está en el WAL')
+        # Una copia como la del explorador, con el WAL sin volcar.
+        copia_cruda = Path(temporal) / 'copia_explorador.db'
+        shutil.copy(ruta_base, copia_cruda)
+        cnx = sqlite3.connect(f'file:{copia_cruda}?mode=ro', uri=True)
+        cuantos_cruda = cnx.execute('SELECT COUNT(*) FROM producto').fetchone()[0]
+        cnx.close()
 
-    respaldo.COPIAS_A_CONSERVAR = 1
-    respaldo.respaldar(verbose=False)
-    respaldo.podar()
-    comprobar('la poda no borra las copias ajenas', ajena.exists())
+        copia = respaldo.respaldar(verbose=False)
+        cnx = sqlite3.connect(f'file:{copia}?mode=ro', uri=True)
+        cuantos_copia = cnx.execute('SELECT COUNT(*) FROM producto').fetchone()[0]
+        cnx.close()
 
-    print()
-    print('La restauración sirve')
-    respaldo.probar_restauracion(copia)
-    comprobar('probar_restauracion termina sin error', True)
+        comprobar('la copia de archivo pierde lo que está en el WAL',
+                  cuantos_cruda < 50, f'recuperó {cuantos_cruda} de 50')
+        comprobar('backup() recupera todo', cuantos_copia == 50,
+                  f'recuperó {cuantos_copia} de 50')
 
-    abierta.close()
+        print()
+        print('La copia es un archivo solo, sin acompañantes')
+        sobrantes = [p.name for p in copia.parent.iterdir()
+                     if p.name.startswith(copia.stem)
+                     and p.suffix in ('-wal', '-shm', '.parcial')
+                     or p.name.endswith(('-wal', '-shm', '.parcial'))]
+        comprobar('no quedan archivos -wal, -shm ni .parcial',
+                  not sobrantes, f'quedaron {sobrantes}')
+
+        print()
+        print('Las conexiones se cierran de verdad')
+        # Este es el defecto que rompía el respaldo en Windows. Un
+        # `with sqlite3.connect(...)` no cierra: solo termina la
+        # transacción. La conexión seguía abierta y Windows no deja
+        # renombrar un archivo abierto.
+        with respaldo._solo_lectura(copia) as cnx_prueba:
+            cnx_prueba.execute('SELECT 1')
+        try:
+            cnx_prueba.execute('SELECT 1')
+            cerrada = False
+        except sqlite3.ProgrammingError:
+            cerrada = True
+        comprobar('_solo_lectura cierra la conexión al salir', cerrada,
+                  'la conexión seguía abierta, en Windows esto impide '
+                  'renombrar el archivo')
+
+        print()
+        print('Las copias ajenas se respetan')
+        ajena = copia.parent / 'herson_antes_migracion_001_2026-10-09_195402.db'
+        ajena.write_bytes(b'')
+        comprobar('no cuenta como respaldo automático',
+                  ajena not in respaldo.respaldos_existentes())
+        comprobar('sí aparece como copia ajena',
+                  ajena in respaldo.respaldos_ajenos())
+        respaldo.listar()
+        comprobar('listar no truena con nombres ajenos', True)
+
+        respaldo.COPIAS_A_CONSERVAR = 1
+        respaldo.respaldar(verbose=False)
+        respaldo.podar()
+        comprobar('la poda no borra las copias ajenas', ajena.exists())
+
+        print()
+        print('Dos respaldos en el mismo segundo no se pisan')
+        # Este fue el defecto que aparecio en Windows: el nombre lleva
+        # la hora al segundo, y en Linux el segundo respaldo
+        # sobrescribia al primero mientras que en Windows fallaba con
+        # WinError 183.
+        respaldo.COPIAS_A_CONSERVAR = 30
+        uno = respaldo.respaldar(verbose=False)
+        dos = respaldo.respaldar(verbose=False)
+        comprobar('los dos se crean con nombres distintos',
+                  uno != dos and uno.exists() and dos.exists(),
+                  f'{uno.name} contra {dos.name}')
+        comprobar('los dos cuentan como respaldos automáticos',
+                  uno in respaldo.respaldos_existentes()
+                  and dos in respaldo.respaldos_existentes())
+
+        print()
+        print('La restauración sirve')
+        respaldo.probar_restauracion(copia)
+        comprobar('probar_restauracion termina sin error', True)
+
+    finally:
+        abierta.close()
 
 print()
 if fallos:

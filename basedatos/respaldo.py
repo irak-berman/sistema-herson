@@ -24,6 +24,7 @@ Estadía profesional, Ingeniería en Sistemas Computacionales, UVEG
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -67,10 +68,37 @@ def momento_de(copia: Path) -> datetime | None:
     """
     if not (copia.name.startswith(PREFIJO) and copia.suffix == SUFIJO):
         return None
+    sello = copia.stem[len(PREFIJO):]
+    # Dos respaldos del mismo segundo llevan un consecutivo al final,
+    # por ejemplo 20261107_142958_2. Se descarta para leer la fecha.
+    partes = sello.split('_')
+    if len(partes) == 3 and partes[2].isdigit():
+        sello = '_'.join(partes[:2])
     try:
-        return datetime.strptime(copia.stem[len(PREFIJO):], '%Y%m%d_%H%M%S')
+        return datetime.strptime(sello, '%Y%m%d_%H%M%S')
     except ValueError:
         return None
+
+
+def ruta_libre(propuesta: Path) -> Path:
+    """
+    Devuelve un nombre que no esté ocupado.
+
+    El nombre del respaldo lleva la hora al segundo, así que dos
+    respaldos dentro del mismo segundo chocarían. En Linux el segundo
+    sobrescribiría al primero sin avisar y en Windows fallaría con
+    WinError 183. Ninguna de las dos es aceptable: un respaldo no se
+    pisa a otro en silencio.
+    """
+    if not propuesta.exists():
+        return propuesta
+    for consecutivo in range(2, 100):
+        alterna = propuesta.with_name(
+            f'{propuesta.stem}_{consecutivo}{propuesta.suffix}')
+        if not alterna.exists():
+            return alterna
+    raise RuntimeError(
+        f'Demasiados respaldos con el nombre {propuesta.name}')
 
 
 def respaldos_existentes() -> list[Path]:
@@ -185,7 +213,7 @@ def respaldar(verbose: bool = True) -> Path:
         raise FileNotFoundError(f'No existe la base en {RUTA_BASE}')
 
     CARPETA_RESPALDOS.mkdir(parents=True, exist_ok=True)
-    destino = CARPETA_RESPALDOS / nombre_de_respaldo()
+    destino = ruta_libre(CARPETA_RESPALDOS / nombre_de_respaldo())
 
     # La copia se escribe primero con un nombre temporal y se renombra
     # al final. Si el proceso se interrumpe a la mitad, en la carpeta
@@ -213,7 +241,11 @@ def respaldar(verbose: bool = True) -> Path:
 
     verificar(parcial)
     limpiar_sobrantes(parcial)
-    parcial.rename(destino)
+    # os.replace y no Path.rename: en Windows rename falla si el
+    # destino existe, mientras que en Linux lo sobrescribe sin avisar.
+    # El nombre ya se eligio libre, asi que esto solo cubre la carrera
+    # entre elegirlo y usarlo.
+    os.replace(parcial, destino)
     limpiar_sobrantes(destino)
 
     if verbose:
