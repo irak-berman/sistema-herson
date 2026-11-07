@@ -3,6 +3,11 @@ datos/
 *.xlsx
 *.csv
 
+# Reportes de diagnostico y de carga: llevan descripciones,
+# claves y costos reales del deposito
+*_diagnostico.md
+carga/reportes/
+
 # Base de datos generada: se reconstruye con el script
 *.db
 *.sqlite
