@@ -15,7 +15,7 @@ se reporta en el avance correspondiente, no se recorre el cronograma.
 Esta lista también es materia prima de los avances que se entregan a la
 universidad, donde hay que reportar qué falta y qué riesgos existen.
 
-Última revisión: 11 de octubre de 2026
+Última revisión: 7 de noviembre de 2026
 
 ---
 
@@ -49,45 +49,83 @@ Carga inicial del catálogo y de las existencias actuales.
 
 ### Script de respaldo de la base de datos
 
-Sin hacer. Media hora con pruebas. **Va primero, antes de cargar el
-primer renglón.**
+**Hecho y probado en la máquina de desarrollo, el 7 de noviembre.**
+`basedatos/respaldo.py`, con `basedatos/probar_respaldo.py` al lado.
 
-El sistema completo vive en `basedatos/herson.db`. El repositorio no
-contiene ese archivo porque los datos del negocio están excluidos a
-propósito, así que hoy no existe ninguna copia.
+Usa `sqlite3.Connection.backup()` y no una copia de archivo, porque la
+base opera en modo WAL. Está comprobado con datos: con 50 productos
+recién escritos y la conexión abierta, una copia del archivo recupera 0
+y `backup()` recupera los 50, porque los 50 estaban en 28 KB de
+`herson.db-wal` sin volcar.
 
-A partir de la carga, esa base contiene varios días de corrección del
-catálogo que no se pueden reconstruir. Perderla en noviembre no cuesta
-ventas, que todavía no hay, cuesta todo el trabajo de limpieza.
+Tres defectos salieron al correrlo contra el entorno real, los tres de
+la misma familia: cosas que en Linux pasan calladas y en Windows
+revientan. El listado tronaba con los nombres de las copias que
+dejaron las migraciones. La copia heredaba el modo WAL y ensuciaba la
+carpeta con archivos `-wal` y `-shm`. Y dos respaldos del mismo segundo
+chocaban, porque `Path.rename` no sobrescribe en Windows. Cada uno
+tiene ahora su comprobación en `probar_respaldo.py`.
 
-El respaldo debe usar la función `backup()` de `sqlite3` y no una copia
-de archivo. La base opera en modo WAL, lo que significa que las
-escrituras recientes pueden estar todavía en `herson.db-wal`. Copiar el
-archivo con el explorador mientras el sistema está abierto puede
-producir una copia incompleta sin que nada lo advierta, y eso se
-descubre el día que se necesita.
+Queda pendiente acordar con el propietario el respaldo externo, que
+está más abajo en la actividad 5.
 
-Incluye probar una restauración, no solo que la copia se cree. Una
-copia que nunca se restauró es una suposición.
+### Verificación del archivo de inventario
 
-### Corrección del archivo de inventario
+**Hecha el 7 de noviembre.** `carga/diagnostico_inventario.py` perfila
+el archivo y escribe el reporte, que queda fuera del repositorio porque
+lleva descripciones, claves y costos reales.
 
-Sin empezar. Es el bloque grande de esta actividad.
+Las cifras reales son 1,546 renglones con datos en 8 hojas de 9, 245
+sin clave, 33 sin descripción, 132 con la cantidad escrita como texto,
+224 sin costo y 89 sin precio.
 
-El diagnóstico encontró que 37 por ciento de los 1,553 renglones
-requiere corrección antes de poder cargarse. Son 248 renglones sin
-clave, 75 claves repetidas en 316 filas y 10 por ciento con la cantidad
-escrita como texto.
+**El diagnóstico anterior se equivocaba en el punto que más asustaba.**
+Contaba 75 claves repetidas en 316 filas y las trataba como un solo
+problema. No lo son. La primera columna significa cosas distintas según
+la hoja: en BORGATTA, MDC y UNISEAL es un código de proveedor, pero en
+MOVIDENT, REISIX, ROETGEN y casi toda la hoja grande es una familia.
+`ni-ti` aparece 48 veces, `modulos ALI` 46, `acero` 24. Esos no son
+duplicados, son productos distintos del mismo tipo, y esa etiqueta
+alimenta `categoria`, no la clave del producto.
 
-Hay que decidir qué se corrige automáticamente y qué a mano. Ese
-criterio forma parte del entregable, que pide la evidencia de la
-verificación de los datos cargados.
+Códigos de proveedor realmente repetidos hay 6, en 13 renglones. Eso es
+una revisión a mano de un rato, no el bloque de días que se temía.
 
-El punto que más puede cambiar el trabajo son las claves repetidas. Si
-resultan ser el mismo producto duplicado, se fusionan. Si son productos
-distintos de proveedores distintos, cada uno necesita su propia clave
-interna. Son dos tareas muy diferentes y conviene medirlo antes de
-estimar horas.
+### Corrección y carga
+
+Sin empezar. Es lo que queda de esta actividad.
+
+`carga/normalizar.py` ya resuelve la parte mecánica y tiene 35
+comprobaciones con celdas del archivo real. Interpreta los precios con
+mayoreo, que es como el depósito registra las presentaciones: de
+`$300.00 c/u o 2 X $525.00` saca el unitario y el paquete de 2 en 525.
+Sobre el archivo real son 25 renglones con paquete y solo 1 con el
+precio ilegible.
+
+Lo que queda para revisión manual es poco: 70 renglones con la cantidad
+ilegible y los 13 con código repetido. El resto se automatiza.
+
+Falta escribir `carga/cargar_inventario.py`. Debe usar las funciones de
+`src/repositorio.py` y no SQL directo, porque los disparadores que
+mantienen cuadrado el total de las notas viven en la base y saltárselos
+ya causó un defecto antes. La existencia inicial entra como movimiento
+de tipo entrada, nunca como columna.
+
+### Decisión pendiente del propietario
+
+**El proveedor de 1,230 renglones.** La hoja grande se llama
+"ALI, ALSER MED, VILLA DE CORTES" y concentra el 80 por ciento del
+catálogo, pero solo trae 4 renglones separadores, así que el archivo no
+dice de qué proveedor es cada bloque.
+
+Son dos caminos. Que Roberto indique dónde empieza y termina cada
+bloque, o cargar esos productos sin proveedor y corregirlos después
+desde la pantalla de edición. El campo es opcional en el modelo, de
+modo que la carga no se detiene, pero el día del arranque el depósito
+vería 1,230 productos sin proveedor.
+
+Es lo único de esta actividad que depende de otra persona, así que
+conviene preguntarlo cuanto antes.
 
 ---
 
