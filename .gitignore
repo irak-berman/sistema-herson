@@ -8,10 +8,13 @@ datos/
 *_diagnostico.md
 carga/reportes/
 
-# Base de datos generada: se reconstruye con el script
+# Base de datos generada: se reconstruye con el script.
+# Los -wal y -shm son los auxiliares del modo WAL.
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
 
 # Python
 __pycache__/

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from contextlib import contextmanager
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -110,6 +111,25 @@ def limpiar_sobrantes(ruta: Path) -> None:
             companero.unlink()
 
 
+@contextmanager
+def _solo_lectura(ruta: Path):
+    """
+    Abre una base en solo lectura y la cierra al terminar.
+
+    Existe porque `with sqlite3.connect(...)` NO cierra la conexión:
+    solo confirma o deshace la transacción. La conexión queda abierta,
+    y en Windows un archivo abierto no se puede renombrar ni borrar, de
+    modo que el respaldo fallaba al renombrar el .parcial con
+    WinError 32. En Linux el mismo código funcionaba, que es como pasó
+    desapercibido.
+    """
+    cnx = sqlite3.connect(f'file:{ruta}?mode=ro', uri=True)
+    try:
+        yield cnx
+    finally:
+        cnx.close()
+
+
 def verificar(ruta: Path) -> None:
     """
     Comprueba la integridad de una base.
@@ -118,7 +138,7 @@ def verificar(ruta: Path) -> None:
     verifica es una suposición, y la suposición se descubre falsa
     justo el día que hace falta.
     """
-    with sqlite3.connect(f'file:{ruta}?mode=ro', uri=True) as cnx:
+    with _solo_lectura(ruta) as cnx:
         resultado = cnx.execute('PRAGMA integrity_check').fetchone()[0]
         if resultado != 'ok':
             raise RuntimeError(
@@ -137,7 +157,7 @@ def contar_renglones(ruta: Path) -> dict[str, int]:
     tablas = ('producto', 'presentacion', 'lote', 'movimiento',
               'venta', 'venta_detalle', 'precio_historial')
     conteo = {}
-    with sqlite3.connect(f'file:{ruta}?mode=ro', uri=True) as cnx:
+    with _solo_lectura(ruta) as cnx:
         presentes = {f[0] for f in cnx.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'")}
         for tabla in tablas:
@@ -249,7 +269,7 @@ def probar_restauracion(copia: Path) -> None:
 
         # Se comprueba que los objetos del esquema estén completos, no
         # solo que el archivo abra.
-        with sqlite3.connect(f'file:{restaurada}?mode=ro', uri=True) as cnx:
+        with _solo_lectura(restaurada) as cnx:
             objetos = cnx.execute(
                 "SELECT type, COUNT(*) FROM sqlite_master "
                 "WHERE name NOT LIKE 'sqlite_%' GROUP BY type").fetchall()
