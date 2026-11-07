@@ -3,32 +3,62 @@
 Sistema de control de inventario y análisis de ventas
 Depósito Dental HERSON
 
-Asuntos abiertos del desarrollo, ordenados por la fecha en que dejan de
-poder esperar. Cada uno dice qué es, por qué importa y cuánto cuesta,
-para decidir con información y no por lo que se vea más urgente ese día.
+Asuntos abiertos del desarrollo, ordenados según la actividad del
+cronograma a la que pertenecen. Cada uno dice qué es, por qué importa y
+cuánto cuesta, para decidir con información y no por lo que se vea más
+urgente ese día.
 
-Esta lista se actualiza conforme se cierran cosas. También es la
-materia prima de los avances que se entregan a la universidad, donde
-hay que reportar qué falta y qué riesgos existen.
+Las fechas provienen del diagrama de Gantt entregado y firmado. Ningún
+pendiente de esta lista puede moverlas: si algo no cabe en su periodo,
+se reporta en el avance correspondiente, no se recorre el cronograma.
+
+Esta lista también es materia prima de los avances que se entregan a la
+universidad, donde hay que reportar qué falta y qué riesgos existen.
 
 Última revisión: 11 de octubre de 2026
 
 ---
 
-## Antes de la carga inicial, 13 de noviembre
+## Actividad 3, del 2 de octubre al 2 de noviembre
+
+Desarrollo del módulo de catálogo, control de existencias por lote y
+registro de ventas con generación de notas.
+
+**Terminada el 11 de octubre, con tres semanas de holgura.**
+
+Los cuatro componentes que nombra el entregable están construidos y
+probados. Registro y consulta de productos, lotes, movimientos y
+emisión de la nota de venta.
+
+La evidencia también quedó levantada. Diez capturas de las pantallas en
+operación, una nota de venta generada por el sistema y la referencia al
+repositorio, todo reunido en
+`Evidencias_Entregable_3_HERSON.pdf`.
+
+El recorrido que las produjo sirvió además como prueba funcional del
+módulo y dejó dos hallazgos. Uno quedó corregido en el momento, los
+acentos faltantes en los encabezados de la nota en PDF. El otro está
+abajo, en la actividad 5, porque no es un error sino una decisión que
+corresponde al propietario, si el costo de inventario debe llevar IVA.
+
+---
+
+## Actividad 4, del 3 al 13 de noviembre
+
+Carga inicial del catálogo y de las existencias actuales.
 
 ### Script de respaldo de la base de datos
 
-Sin hacer. Media hora con pruebas.
+Sin hacer. Media hora con pruebas. **Va primero, antes de cargar el
+primer renglón.**
 
 El sistema completo vive en `basedatos/herson.db`. El repositorio no
 contiene ese archivo porque los datos del negocio están excluidos a
 propósito, así que hoy no existe ninguna copia.
 
-La fecha no es arbitraria. A partir de la carga inicial, esa base
-contiene varios días de corrección del catálogo que no se pueden
-reconstruir. Perderla en noviembre no cuesta ventas, que todavía no
-hay, cuesta todo el trabajo de limpieza.
+A partir de la carga, esa base contiene varios días de corrección del
+catálogo que no se pueden reconstruir. Perderla en noviembre no cuesta
+ventas, que todavía no hay, cuesta todo el trabajo de limpieza.
 
 El respaldo debe usar la función `backup()` de `sqlite3` y no una copia
 de archivo. La base opera en modo WAL, lo que significa que las
@@ -42,34 +72,28 @@ copia que nunca se restauró es una suposición.
 
 ### Corrección del archivo de inventario
 
-En proceso. Es el bloque grande que sigue.
+Sin empezar. Es el bloque grande de esta actividad.
 
 El diagnóstico encontró que 37 por ciento de los 1,553 renglones
 requiere corrección antes de poder cargarse. Son 248 renglones sin
 clave, 75 claves repetidas en 316 filas y 10 por ciento con la cantidad
 escrita como texto.
 
-Hay que decidir qué se corrige automáticamente y qué a mano, y dejar
-constancia del criterio, porque esa decisión se reporta en el avance.
+Hay que decidir qué se corrige automáticamente y qué a mano. Ese
+criterio forma parte del entregable, que pide la evidencia de la
+verificación de los datos cargados.
+
+El punto que más puede cambiar el trabajo son las claves repetidas. Si
+resultan ser el mismo producto duplicado, se fusionan. Si son productos
+distintos de proveedores distintos, cada uno necesita su propia clave
+interna. Son dos tareas muy diferentes y conviene medirlo antes de
+estimar horas.
 
 ---
 
-## Antes de la puesta en operación, 3 de diciembre
+## Actividad 5, del 13 de noviembre al 3 de diciembre
 
-### Exportación del archivo plano para Power BI
-
-Sin hacer. Una o dos horas.
-
-Es el camino que se definió desde el principio. El sistema exporta un
-archivo plano desde la vista `v_ventas_plano` y Power BI lo lee con su
-conector nativo, sin controlador ODBC ni costo de licencia.
-
-Hoy la vista existe y entrega lo que debe, pero nada la exporta. Sin
-esto no hay tablero, y el tablero es el segundo entregable del
-proyecto.
-
-Falta definir dónde se guarda el archivo y con qué frecuencia se
-regenera, que es lo que determina qué tan al día está el tablero.
+Pruebas funcionales, corrección de incidencias y puesta en operación.
 
 ### Pantalla de créditos pendientes
 
@@ -81,23 +105,40 @@ función para marcarlos como pagados. Lo que no existe es la pantalla.
 
 En este momento una venta a crédito se puede registrar pero nunca se
 puede marcar como pagada, así que el saldo del cliente crece para
-siempre. Es un hueco funcional, no una mejora.
+siempre. Es un hueco funcional y va a salir en cuanto el propietario
+pruebe el sistema con casos reales, que es justo lo que pide esta
+actividad.
 
-### Alertas de caducidad y punto de reorden
+### Confirmar si el costo de inventario debe llevar IVA
 
-Hecho. Se muestran en la pantalla de inicio.
+Sin resolver. Es decisión del propietario y de su contador, no técnica.
+Cambiarla después cuesta minutos. Dejarla sin preguntar cuesta que tres
+cifras de decisión estén mal durante meses.
 
-Queda pendiente confirmar con el propietario si 180 días de aviso de
-caducidad es el plazo correcto una vez que opere con datos reales.
+Hoy el sistema guarda el costo con el IVA incluido. La casilla «El
+importe incluye IVA» de la pantalla de recepción no resta el impuesto,
+indica que el importe capturado ya lo trae, y al desmarcarla el sistema
+se lo suma, para llegar en ambos casos a lo que realmente se pagó. Está
+programado de forma coherente.
 
----
+La pregunta es si ese criterio es el correcto. El depósito tiene RFC. Si
+acredita el IVA de sus compras, ese 16 por ciento no es costo sino un
+saldo a favor, y entonces el costo debería guardarse neto.
 
-## El día de la instalación en el depósito
+Mueve tres cifras que se usan para decidir.
 
-La lista completa está en `docs/instalacion.md`. Aquí solo lo que se
-olvida con más facilidad.
+- El valor del inventario de la pantalla de inicio. Con los datos de
+  prueba daba 15,181 pesos con IVA y unos 13,087 sin él.
+- El margen por pieza, que es con lo que se fija el precio de venta.
+- La utilidad estimada de `v_ventas_plano`, que a partir de enero
+  alimenta el tablero de Power BI.
 
-### Cambiar el detalle de errores
+Como está hoy el criterio es consistente, siempre que el precio de venta
+también incluya IVA, que es lo habitual en una nota a público en
+general. Lo que no puede quedar es una cifra con impuesto comparada
+contra otra sin él.
+
+### Cambiar el detalle de errores al instalar
 
 En `.streamlit/config.toml`, cambiar `showErrorDetails` de `"full"` a
 `"none"`.
@@ -108,18 +149,21 @@ de funciones internas. Es incomprensible para quien usa el sistema y
 expone su estructura a cualquiera que esté frente al monitor,
 incluyendo clientes.
 
-### Confirmar los datos de la computadora del depósito
+### Confirmar la versión de Python del equipo del depósito
 
-Tres cosas que todavía se desconocen y que cambian el procedimiento de
-instalación.
+Es el único dato del equipo que sigue sin conocerse. Decide si hay que
+instalar Python antes de nada o si basta con instalar las dependencias.
 
-1. Versión de Windows y si es de 64 bits
-2. Si tiene Python instalado y en qué versión
-3. Si tiene internet durante la instalación
+El resto ya está documentado y no hace falta volver a preguntarlo. El
+cuestionario del 1 de septiembre confirma que el depósito tiene
+internet, que se pueden instalar programas sin restricción de
+administrador y que la computadora es de uso exclusivo de
+administración y de la vendedora. El anexo fotográfico del reporte de
+diagnóstico muestra que se trata de una computadora portátil con
+Windows 11 Home y 16 GB de memoria.
 
-La tercera decide si las dependencias se instalan desde la red o hay
-que llevarlas descargadas en una memoria USB. Verificarlas antes ahorra
-un viaje en falso.
+Como hay internet, las dependencias se descargan en el momento y no
+hace falta llevarlas en una memoria USB.
 
 ### Acordar el respaldo externo con el propietario
 
@@ -128,9 +172,48 @@ accidental, pero no contra que falle el disco. Para eso hace falta una
 copia fuera de esa computadora, y hay que acordar con qué medio y con
 qué frecuencia.
 
+La lista completa de la instalación está en `docs/instalacion.md`.
+
 ---
 
-## Antes de cerrar el proyecto, marzo de 2027
+## Actividad 6, del 3 al 23 de diciembre
+
+Módulo de alertas de caducidad próxima y cálculo de punto de reorden.
+
+**Adelantada.** Las dos alertas ya se muestran en la pantalla de
+inicio, apoyadas en las vistas `v_por_reabastecer` y
+`v_caducidad_proxima`.
+
+Queda confirmar con el propietario, ya con datos reales, si los 180
+días de aviso de caducidad y el 15 por ciento de existencia mínima
+siguen siendo los criterios correctos. Ese ajuste es lo que convierte
+una alerta en algo que se atiende y no en algo que se ignora.
+
+---
+
+## Actividad 8, del 12 de enero al 4 de febrero
+
+Construcción del tablero de análisis de ventas.
+
+### Exportación del archivo plano para Power BI
+
+Sin hacer. Una o dos horas. **Debe estar lista antes del 12 de enero**,
+porque el entregable de esta actividad depende de ella.
+
+Es el camino que se definió desde el principio. El sistema exporta un
+archivo plano desde la vista `v_ventas_plano` y Power BI lo lee con su
+conector nativo, sin controlador ODBC ni costo de licencia.
+
+Hoy la vista existe y entrega lo que debe, incluyendo el importe sin
+rebajar, el descuento concedido y la utilidad estimada. Lo que falta es
+que algo la escriba a un archivo.
+
+Falta definir dónde se guarda y con qué frecuencia se regenera, que es
+lo que determina qué tan al día está el tablero.
+
+---
+
+## Antes de cerrar el proyecto, 17 de marzo
 
 ### Separación de accesos
 

@@ -15,6 +15,29 @@ import repositorio as repo
 import servicios as srv
 from conexion import BaseNoEncontrada
 
+def ciclo(nombre: str) -> int:
+    """
+    Número de la tanda actual de controles de un formulario.
+
+    Los campos se vacían cambiándoles la clave, no borrándola del
+    estado. Borrar la clave de un control deja a Streamlit mostrando el
+    valor anterior aunque por dentro ya esté vacío.
+    """
+    clave = f'tanda_{nombre}'
+    if clave not in st.session_state:
+        st.session_state[clave] = 0
+    return st.session_state[clave]
+
+
+def renovar(nombre: str, campos: tuple) -> None:
+    """Descarta los controles de la tanda actual y abre una nueva."""
+    clave = f'tanda_{nombre}'
+    actual = ciclo(nombre)
+    for campo in campos:
+        st.session_state.pop(f'{campo}_{actual}', None)
+    st.session_state[clave] = actual + 1
+
+
 def unidades(cantidad: float, singular: str, plural: str) -> str:
     """Devuelve la cantidad con su unidad en singular o plural."""
     return f'{cantidad:g} {singular if cantidad == 1 else plural}'
@@ -95,35 +118,51 @@ def seccion_alta(proveedores: list, categorias: list,
     mapa_proveedores = opciones(proveedores, 'id_proveedor', 'nombre')
     mapa_categorias = opciones(categorias, 'id_categoria', 'nombre')
 
-    with st.form('alta_producto', clear_on_submit=True):
-        descripcion = st.text_input('Descripción del producto')
+    # Los campos no van dentro de un formulario a propósito. En un
+    # formulario de Streamlit, pulsar Enter en cualquier campo equivale a
+    # oprimir el botón, y el alta se guardaba a medio capturar, con el
+    # producto creado, su clave consumida y su movimiento de existencia
+    # inicial registrado. Dar de alta un producto mueve inventario, así
+    # que debe requerir un clic deliberado.
+    if st.session_state.get('alta_resultado'):
+        st.success(st.session_state.pop('alta_resultado'))
 
-        columnas = st.columns(3)
-        categoria = columnas[0].selectbox('Categoría', list(mapa_categorias))
-        proveedor = columnas[1].selectbox(
-            'Proveedor', ['Sin asignar'] + list(mapa_proveedores))
-        mapa_unidades = opciones(unidades_activas, 'id_unidad', 'nombre')
-        unidad = columnas[2].selectbox(
-            'Unidad base', list(mapa_unidades),
-            help='Unidad en la que se controla la existencia. Normalmente '
-                 'la más pequeña en que se vende el producto.')
+    tanda = ciclo('alta_producto')
+    descripcion = st.text_input('Descripción del producto',
+                                key=f'alta_desc_{tanda}')
 
-        columnas = st.columns(4)
-        clave_proveedor = columnas[0].text_input(
-            'Clave del proveedor', placeholder='Opcional')
-        existencia = columnas[1].number_input(
-            'Existencia inicial', min_value=0.0, value=None,
-            placeholder='0',
-            help='Cantidad en unidad base. Si la unidad es pieza y tiene 3 '
-                 'cajas de 100, capture 300.')
-        costo = columnas[2].number_input(
-            'Costo unitario ($)', min_value=0.0, value=None,
-            placeholder='0.00', format='%.2f')
-        precio = columnas[3].number_input(
-            'Precio de venta ($)', min_value=0.0, value=None,
-            placeholder='0.00', format='%.2f')
+    columnas = st.columns(3)
+    categoria = columnas[0].selectbox('Categoría', list(mapa_categorias),
+                                      key=f'alta_cat_{tanda}')
+    proveedor = columnas[1].selectbox(
+        'Proveedor', ['Sin asignar'] + list(mapa_proveedores),
+        key=f'alta_prov_{tanda}')
+    mapa_unidades = opciones(unidades_activas, 'id_unidad', 'nombre')
+    unidad = columnas[2].selectbox(
+        'Unidad base', list(mapa_unidades), key=f'alta_uni_{tanda}',
+        help='Unidad en la que se controla la existencia. Normalmente '
+             'la más pequeña en que se vende el producto.')
 
-        enviado = st.form_submit_button('Dar de alta', type='primary')
+    columnas = st.columns(4)
+    clave_proveedor = columnas[0].text_input(
+        'Clave del proveedor', placeholder='Opcional',
+        key=f'alta_clave_{tanda}')
+    existencia = columnas[1].number_input(
+        'Existencia inicial', min_value=0.0, value=None,
+        placeholder='0', key=f'alta_exis_{tanda}',
+        help='Cantidad en unidad base. Si la unidad es pieza y tiene 3 '
+             'cajas de 100, capture 300.')
+    costo = columnas[2].number_input(
+        'Costo unitario ($)', min_value=0.0, value=None,
+        placeholder='0.00', format='%.2f', key=f'alta_costo_{tanda}')
+    precio = columnas[3].number_input(
+        'Precio de venta ($)', min_value=0.0, value=None,
+        placeholder='0.00', format='%.2f', key=f'alta_precio_{tanda}')
+
+    st.caption('La captura se guarda solo con el botón. Pulsar Enter '
+               'en los campos no la guarda.')
+    enviado = st.button('Dar de alta', type='primary',
+                        key=f'alta_boton_{tanda}')
 
     if enviado:
         if not descripcion.strip():
@@ -142,10 +181,14 @@ def seccion_alta(proveedores: list, categorias: list,
                 id_unidad=mapa_unidades[unidad],
             )
             producto = repo.obtener_producto(id_producto)
-            st.success(
+            st.session_state['alta_resultado'] = (
                 f'Producto registrado con la clave {producto["clave_interna"]}. '
                 f'Su existencia mínima quedó en '
                 f'{unidades(producto["existencia_minima"], producto["unidad_base"], producto["unidad_plural"])}.')
+            renovar('alta_producto',
+                    ('alta_desc', 'alta_cat', 'alta_prov', 'alta_uni',
+                     'alta_clave', 'alta_exis', 'alta_costo', 'alta_precio'))
+            st.rerun()
         except srv.ReglaDeNegocio as error:
             st.error(str(error))
 
@@ -181,37 +224,41 @@ def seccion_edicion(unidades_activas: list) -> None:
     columnas[2].metric('Costo', pesos(producto['costo_unitario']))
     columnas[3].metric('Precio', pesos(producto['precio_venta']))
 
-    with st.form('editar_producto'):
-        descripcion = st.text_input('Descripción', value=producto['descripcion'])
+    # Sin formulario: en uno, Enter guarda a medio capturar, y aquí
+    # eso cambia precios y deja un registro en el historial.
+    descripcion = st.text_input('Descripción', value=producto['descripcion'])
 
-        columnas = st.columns(4)
-        # El costo se guarda con toda su precisión. Se muestra
-        # redondeado y solo se reescribe si el usuario lo modifica, para
-        # no perder decimales al abrir la pantalla sin tocar nada.
-        costo_guardado = float(producto['costo_unitario'])
-        costo = columnas[0].number_input(
-            'Costo unitario ($)', min_value=0.0, format='%.2f',
-            value=round(costo_guardado, 2))
-        precio = columnas[1].number_input(
-            'Precio de venta ($)', min_value=0.0, format='%.2f',
-            value=float(producto['precio_venta']))
-        minima = columnas[2].number_input(
-            'Existencia mínima', min_value=0, step=1,
-            value=int(producto['existencia_minima']))
-        columnas[3].write('')
-        activo = columnas[3].checkbox('Producto activo',
-                                      value=bool(producto['activo']))
+    columnas = st.columns(4)
+    # El costo se guarda con toda su precisión. Se muestra
+    # redondeado y solo se reescribe si el usuario lo modifica, para
+    # no perder decimales al abrir la pantalla sin tocar nada.
+    costo_guardado = float(producto['costo_unitario'])
+    costo = columnas[0].number_input(
+        'Costo unitario ($)', min_value=0.0, format='%.2f',
+        value=round(costo_guardado, 2))
+    precio = columnas[1].number_input(
+        'Precio de venta ($)', min_value=0.0, format='%.2f',
+        value=float(producto['precio_venta']))
+    minima = columnas[2].number_input(
+        'Existencia mínima', min_value=0, step=1,
+        value=int(producto['existencia_minima']))
+    columnas[3].write('')
+    activo = columnas[3].checkbox('Producto activo',
+                                  value=bool(producto['activo']))
 
-        caduca_actual = bool(repo.consultar_una(
-            'SELECT maneja_caducidad FROM producto WHERE id_producto = ?',
-            (id_producto,))['maneja_caducidad'])
-        caduca = st.checkbox(
-            'Este producto maneja lote y fecha de caducidad',
-            value=caduca_actual,
-            help='Si está marcado, al recibir mercancía se pedirán el '
-                 'número de lote y la fecha de caducidad.')
+    caduca_actual = bool(repo.consultar_una(
+        'SELECT maneja_caducidad FROM producto WHERE id_producto = ?',
+        (id_producto,))['maneja_caducidad'])
+    caduca = st.checkbox(
+        'Este producto maneja lote y fecha de caducidad',
+        value=caduca_actual,
+        help='Si está marcado, al recibir mercancía se pedirán el '
+             'número de lote y la fecha de caducidad.')
 
-        guardar = st.form_submit_button('Guardar cambios', type='primary')
+    st.caption('Los cambios se guardan solo con el botón. Pulsar Enter '
+               'en los campos no los guarda.')
+    guardar = st.button('Guardar cambios', type='primary',
+                        key=f'edit_guardar_{id_producto}')
 
     if guardar:
         # Si el usuario no tocó el costo, se conserva el valor original
@@ -284,26 +331,33 @@ def seccion_edicion(unidades_activas: list) -> None:
             f'Sin presentaciones. El producto se vende por '
             f'{producto["unidad_base"]}.')
 
-    with st.form('alta_presentacion', clear_on_submit=True):
-        mapa_unidades = opciones(unidades_activas, 'id_unidad', 'nombre')
-        columnas = st.columns([2, 1, 1])
-        nombre = columnas[0].selectbox('Presentación', list(mapa_unidades))
-        factor = columnas[1].number_input(
-            'Equivale a', min_value=0.01, value=None, placeholder='1',
-            help=f'Cuántas {producto["unidad_plural"]} entrega esta '
-                 f'presentación')
-        precio_pres = columnas[2].number_input(
-            'Precio ($)', min_value=0.0, value=None,
-            placeholder='0.00', format='%.2f')
+    # Sin formulario, para que Enter no agregue una presentación a medio
+    # capturar. Una presentación con el factor equivocado descuadra la
+    # existencia en la primera venta de mayoreo.
+    tanda = ciclo('alta_presentacion')
+    mapa_unidades = opciones(unidades_activas, 'id_unidad', 'nombre')
+    columnas = st.columns([2, 1, 1])
+    nombre = columnas[0].selectbox('Presentación', list(mapa_unidades),
+                                   key=f'pres_uni_{tanda}')
+    factor = columnas[1].number_input(
+        'Equivale a', min_value=0.01, value=None, placeholder='1',
+        key=f'pres_factor_{tanda}',
+        help=f'Cuántas {producto["unidad_plural"]} entrega esta '
+             f'presentación')
+    precio_pres = columnas[2].number_input(
+        'Precio ($)', min_value=0.0, value=None,
+        placeholder='0.00', format='%.2f', key=f'pres_precio_{tanda}')
 
-        agregar = st.form_submit_button('Agregar presentación')
+    agregar = st.button('Agregar presentación',
+                        key=f'pres_boton_{tanda}')
 
     if agregar:
         try:
             repo.crear_presentacion(
                 id_producto, mapa_unidades[nombre], numero(factor, 1.0),
                 numero(precio_pres))
-            st.success('Presentación agregada.')
+            renovar('alta_presentacion',
+                    ('pres_uni', 'pres_factor', 'pres_precio'))
             st.rerun()
         except Exception:
             st.error('El producto ya tiene una presentación en esa unidad.')

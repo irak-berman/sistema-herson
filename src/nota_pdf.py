@@ -43,7 +43,7 @@ import repositorio as repo
 # No lleva RFC a propósito. El propietario lo pidió así: quien requiere
 # factura la solicita aparte y esta nota no la sustituye.
 # ---------------------------------------------------------------------
-NEGOCIO = 'Deposito Dental HERSON'
+NEGOCIO = 'Depósito Dental HERSON'
 
 # El bloque se corta a proposito en tres renglones. Dejado como una
 # sola cadena larga, el salto cae donde quepa y parte el nombre de la
@@ -52,7 +52,7 @@ DATOS_NEGOCIO = (
     'Calle 10 #216 esq. 20 de Noviembre, Local 3\n'
     'Col. Cazones, C.P. 93230, Poza Rica, Ver.   |   Tel. 782 348 76 13\n'
     'Lunes a viernes de 9:00 a 14:00 y de 15:00 a 18:00   |   '
-    'Sabados de 9:00 a 15:00'
+    'Sábados de 9:00 a 15:00'
 )
 LEYENDA = 'No se aceptan devoluciones.'
 
@@ -83,11 +83,11 @@ LINEA = (210, 214, 226)
 # mejor lo de siempre: cada producto a su precio, y la rebaja completa
 # una sola vez al final.
 COLUMNAS = (20, 26, 94, 26, 26)
-TITULOS = ('Cantidad', 'Presentacion', 'Descripcion', 'Precio', 'Importe')
+TITULOS = ('Cantidad', 'Presentación', 'Descripción', 'Precio', 'Importe')
 
 FORMAS = {'efectivo': 'Efectivo',
           'transferencia': 'Transferencia',
-          'credito': 'Credito'}
+          'credito': 'Crédito'}
 
 
 @lru_cache(maxsize=1)

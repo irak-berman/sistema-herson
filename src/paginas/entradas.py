@@ -226,17 +226,23 @@ def mostrar_recepcion() -> None:
     columnas[1].metric('Piezas recibidas', f'{piezas:g}')
     columnas[2].metric('Importe capturado', pesos(importe))
 
-    with st.form('cerrar_recepcion'):
-        columnas = st.columns(2)
-        referencia = columnas[0].text_input(
-            'Factura o pedido', placeholder='Folio del documento')
-        observaciones = columnas[1].text_input(
-            'Observaciones', placeholder='Opcional')
+    # Sin formulario, para que Enter no registre la recepción a medio
+    # capturar. Registrarla mueve inventario y fija costos, así que debe
+    # requerir un clic deliberado.
+    columnas = st.columns(2)
+    referencia = columnas[0].text_input(
+        'Factura o pedido', placeholder='Folio del documento',
+        key='rec_referencia')
+    observaciones = columnas[1].text_input(
+        'Observaciones', placeholder='Opcional', key='rec_observaciones')
 
-        botones = st.columns(2)
-        confirmar = botones[0].form_submit_button(
-            'Registrar la recepción', type='primary')
-        descartar = botones[1].form_submit_button('Descartar todo')
+    st.caption('La recepción se registra solo con el botón. Pulsar Enter '
+               'en los campos no la registra.')
+
+    botones = st.columns([2, 2, 4])
+    confirmar = botones[0].button(
+        'Registrar la recepción', type='primary', key='rec_confirmar')
+    descartar = botones[1].button('Descartar todo', key='rec_descartar')
 
     if confirmar:
         try:
