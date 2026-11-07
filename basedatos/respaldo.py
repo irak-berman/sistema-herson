@@ -55,12 +55,59 @@ def nombre_de_respaldo(momento: datetime | None = None) -> str:
     return f'{PREFIJO}{momento:%Y%m%d_%H%M%S}{SUFIJO}'
 
 
+def momento_de(copia: Path) -> datetime | None:
+    """
+    Lee la fecha del nombre de un respaldo, o None si no la trae.
+
+    La carpeta ya contiene copias hechas por los scripts de migración,
+    con nombres como herson_antes_migracion_001_2026-10-09_195402.db.
+    Esas no siguen el formato de este script, así que no deben romper
+    el listado ni entrar en la poda automática.
+    """
+    if not (copia.name.startswith(PREFIJO) and copia.suffix == SUFIJO):
+        return None
+    try:
+        return datetime.strptime(copia.stem[len(PREFIJO):], '%Y%m%d_%H%M%S')
+    except ValueError:
+        return None
+
+
 def respaldos_existentes() -> list[Path]:
-    """Los respaldos que hay, del más reciente al más antiguo."""
+    """
+    Los respaldos automáticos, del más reciente al más antiguo.
+
+    Solo los que creó este script. Una copia con otro nombre la puso
+    alguien a propósito y se queda donde está.
+    """
     if not CARPETA_RESPALDOS.exists():
         return []
-    copias = CARPETA_RESPALDOS.glob(f'{PREFIJO}*{SUFIJO}')
+    copias = [c for c in CARPETA_RESPALDOS.glob(f'{PREFIJO}*{SUFIJO}')
+              if momento_de(c) is not None]
     return sorted(copias, key=lambda p: p.name, reverse=True)
+
+
+def respaldos_ajenos() -> list[Path]:
+    """Copias de la carpeta que este script no creó y nunca borra."""
+    if not CARPETA_RESPALDOS.exists():
+        return []
+    return sorted(c for c in CARPETA_RESPALDOS.glob(f'*{SUFIJO}')
+                  if momento_de(c) is None)
+
+
+def limpiar_sobrantes(ruta: Path) -> None:
+    """
+    Elimina los archivos auxiliares que pudieran haber quedado junto a
+    una copia.
+
+    Abrir una base deja a su lado un -wal y un -shm. En la copia no
+    sirven de nada y estorban: un respaldo tiene que ser un solo
+    archivo que se pueda mover a otro medio sin acompañantes, y un -wal
+    olvidado al lado de un respaldo puede confundir una restauración.
+    """
+    for auxiliar in ('-wal', '-shm'):
+        companero = ruta.with_name(ruta.name + auxiliar)
+        if companero.exists():
+            companero.unlink()
 
 
 def verificar(ruta: Path) -> None:
@@ -133,13 +180,21 @@ def respaldar(verbose: bool = True) -> Path:
             # Aquí está lo importante. backup() lee la base a través del
             # motor, de modo que el contenido del WAL queda incluido.
             origen.backup(copia)
+            # La copia hereda el modo WAL del original, y entonces cada
+            # vez que se abra deja a su lado un -wal y un -shm. Un
+            # respaldo debe ser un archivo solo, que se pueda mover o
+            # guardar en otro medio sin acompañantes: en DELETE el motor
+            # vuelca el WAL al archivo y lo elimina.
+            copia.execute('PRAGMA journal_mode = DELETE')
         finally:
             copia.close()
     finally:
         origen.close()
 
     verificar(parcial)
+    limpiar_sobrantes(parcial)
     parcial.rename(destino)
+    limpiar_sobrantes(destino)
 
     if verbose:
         tamano = destino.stat().st_size / 1024
@@ -249,16 +304,26 @@ def restaurar_de_verdad(copia: Path) -> None:
 def listar() -> None:
     """Muestra los respaldos disponibles."""
     copias = respaldos_existentes()
+    ajenas = respaldos_ajenos()
+
     if not copias:
-        print('No hay respaldos todavía.')
-        return
-    print(f'{len(copias)} respaldos, del más reciente al más antiguo.')
-    for copia in copias:
-        momento = datetime.strptime(
-            copia.stem[len(PREFIJO):], '%Y%m%d_%H%M%S')
-        tamano = copia.stat().st_size / 1024
-        print(f'  {copia.name}   {momento:%d/%m/%Y %H:%M}   '
-              f'{tamano:,.0f} KB')
+        print('No hay respaldos automáticos todavía.')
+    else:
+        print(f'{len(copias)} respaldos automáticos, del más reciente al '
+              f'más antiguo.')
+        for copia in copias:
+            momento = momento_de(copia)
+            tamano = copia.stat().st_size / 1024
+            print(f'  {copia.name}   {momento:%d/%m/%Y %H:%M}   '
+                  f'{tamano:,.0f} KB')
+
+    if ajenas:
+        print()
+        print(f'{len(ajenas)} copias con otro nombre, que este script no '
+              f'borra.')
+        for copia in ajenas:
+            tamano = copia.stat().st_size / 1024
+            print(f'  {copia.name}   {tamano:,.0f} KB')
 
 
 def main() -> int:
